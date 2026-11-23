@@ -6,7 +6,7 @@
 Originally built for the **Baao-to-Naga / Ateneo de Naga University (ADNU)** corridor (~30–31 km along Maharlika Highway), Byahe30 models transit flow, live road congestion, headway schedules, and optimal departure windows purely through software APIs, GTFS schemas, and corridor math.
 
 ### Core Architecture Philosophy
-* **Zero Dedicated Tracker Dependency:** No installed GPS units, vehicle OBD trackers, or mandatory passenger check-ins. An operator-authorized driver's own phone may optionally share location.
+* **Zero Dedicated Tracker Dependency:** No installed GPS units, vehicle OBD trackers, or mandatory passenger check-ins. A commuter riding a vehicle or its driver may optionally share phone location; core estimates must remain useful without reports.
 * **Corridor & Node Topology:** Treats routes as directed graph polylines with static highway nodes/waypoints.
 * **API Telemetry & Headway Logic:** Merges external traffic/routing telemetry with GTFS frequency rules to estimate travel times, corridor bottlenecks, and virtual vehicle progress.
 * **Scalable Standard:** Structured to expand effortlessly from Baao–Naga to other Bicol transit corridors (e.g., Iriga–Naga, Nabua–Naga, Legazpi–Naga) simply by declaring new node sets and GTFS feeds.
@@ -106,7 +106,7 @@ byahe30/
 
 ## 6. Coding Standards & Principles for AI Agents
 
-1. **Software-Only Constraint:** Never require dedicated hardware GPS or passenger check-ins. Optional operator-authorized location sharing from a driver's existing phone is allowed; schedule and planning features must remain useful without it.
+1. **Software-Only Constraint:** Never require dedicated hardware GPS or passenger check-ins. Optional location sharing from a commuter's or driver's existing phone is allowed; schedule and planning features must remain useful without it.
 2. **Deterministic Calculations:** Always compute segment ETAs using explicit node pairs. Never guess travel times without referencing stored segment metrics or API telemetry.
 3. **API Budget Awareness:** Ensure all routing API calls go through the caching layer (`SegmentTelemetry`). Never call external routing APIs directly from client components.
 4. **Resilient UX:** If external traffic APIs fail or rate-limit, fall back seamlessly to GTFS historical rush-hour profiles and flag the payload as `source: "historical_baseline"`.

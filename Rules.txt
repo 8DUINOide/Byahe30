@@ -15,7 +15,7 @@ Before writing any code, read `AGENT.md` and `README.md` to align with the proje
 
 ## Core Constraints (Strictly Enforce)
 1. **Zero Hardware & Zero Crowdsourcing Dependency:** NEVER introduce GPS tracker ingestion, ESP32/RFID hardware schemas, or mandatory passenger "I'm On Board" reporting as core dependencies. Every feature must work out-of-the-box with zero active users.
-   Optional operator-authorized location sharing from a driver's existing phone may supplement the estimates; core commuter features must work when no vehicle is reporting.
+   Optional location sharing from a commuter riding a vehicle or its driver may supplement estimates; core commuter features must work when no vehicle is reporting.
 2. **Honest UX Framing:** NEVER render simulated/headway vehicles as exact GPS-tracked vehicles. Label them clearly as `"Estimated Wave"` or `"Scheduled Flow"` with confidence windows (`±X mins`).
 3. **API Quota Discipline:** Traffic/routing polling workers MUST enforce time-of-day intervals:
    - Peak (`05:30–08:30` and `16:30–19:30` PHT, `Asia/Manila`): poll every `5 minutes`.

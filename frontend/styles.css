@@ -7,6 +7,13 @@
 .map-card{display:flex;flex-direction:column}
 .map-card .map-container{height:auto;min-height:350px;flex:1}
 .map-toolbar .map-toolbar-actions{display:flex;flex-direction:row;align-items:center;gap:12px}
+.map-footnote span#map-footnote-copy{color:#87938c;margin-right:0}
+.driver-demo-button{min-height:36px;border:1px solid #d9cce1;border-radius:4px;background:#faf7fc;color:#73528a;font:600 10px var(--sans);cursor:pointer}
+.driver-demo-button:hover{background:#f2eaf6}
+.driver-demo-button:disabled{opacity:.5;cursor:default}
+.driver-demo-button[hidden],#demo-speed-label[hidden],#demo-note[hidden]{display:none}
+.schematic-track.live{stroke:#16705b;stroke-dasharray:none}
+.schematic-track.demo{stroke:#8655a7;stroke-dasharray:7 5}
 .map-maximize-button{width:36px;height:36px;display:inline-flex;align-items:center;justify-content:center;border:1px solid #dce5dc;border-radius:4px;background:#fff;color:#426153;padding:7px;cursor:pointer;flex:none}
 .map-maximize-button svg{display:block;width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .map-maximize-button .restore-icon{display:none}

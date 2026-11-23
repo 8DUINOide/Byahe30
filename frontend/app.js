@@ -1,7 +1,7 @@
 let CORRIDOR_ID = null;
 const $ = (selector) => document.querySelector(selector);
 const state = { status: null, waves: null, vehicles: [], map: null, mapReady: false, mapAttempted: false, routeLayer: null, stopLayer: null, waveLayer: null, liveVehicleLayer: null };
-const driverSession = { tripId: null, reporterToken: null, watchId: null, lastSentAt: 0, sending: false };
+const driverSession = { tripId: null, reporterToken: null, watchId: null, demoTimer: null, demoStartedAt: 0, demoSpeedMultiplier: 10, isDemo: false, lastSentAt: 0, sending: false };
 
 function formatDuration(seconds) {
   const total = Math.max(0, Math.round(seconds / 60));
@@ -51,8 +51,140 @@ function statusColor(level) {
   return level === 'SEVERE' ? 'severe' : level === 'MODERATE' ? 'moderate' : 'clear';
 }
 
-function pointOnLine(segment, ratio) {
-  return [segment[0][0] + (segment[1][0] - segment[0][0]) * ratio, segment[0][1] + (segment[1][1] - segment[0][1]) * ratio];
+function roadDistanceKm(a, b) {
+  const radians = (degrees) => degrees * Math.PI / 180;
+  const deltaLat = radians(b[1] - a[1]);
+  const deltaLng = radians(b[0] - a[0]);
+  const lat1 = radians(a[1]);
+  const lat2 = radians(b[1]);
+  const value = Math.sin(deltaLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(deltaLng / 2) ** 2;
+  return 6371 * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(Math.max(0, 1 - value)));
+}
+
+function locateOnRoadLine(coordinates, ratio) {
+  if (!coordinates?.length) return null;
+  if (coordinates.length === 1) return { point: coordinates[0], edgeIndex: 0 };
+  const lengths = coordinates.slice(0, -1).map((point, index) => roadDistanceKm(point, coordinates[index + 1]));
+  const total = lengths.reduce((sum, length) => sum + length, 0);
+  const target = total * Math.max(0, Math.min(1, ratio));
+  let traversed = 0;
+  for (let index = 0; index < lengths.length; index += 1) {
+    const length = lengths[index];
+    if (target <= traversed + length || index === lengths.length - 1) {
+      const fraction = length ? Math.max(0, Math.min(1, (target - traversed) / length)) : 0;
+      const from = coordinates[index], to = coordinates[index + 1];
+      return { point: [from[0] + (to[0] - from[0]) * fraction, from[1] + (to[1] - from[1]) * fraction], edgeIndex: index };
+    }
+    traversed += length;
+  }
+  return { point: coordinates.at(-1), edgeIndex: coordinates.length - 2 };
+}
+
+function sliceRoadLineFrom(coordinates, ratio) {
+  const located = locateOnRoadLine(coordinates, ratio);
+  if (!located) return [];
+  const remainder = coordinates.slice(located.edgeIndex + 1);
+  if (remainder.length && roadDistanceKm(located.point, remainder[0]) < 0.000001) remainder.shift();
+  return [located.point, ...remainder];
+}
+
+function sliceRoadLineTo(coordinates, ratio) {
+  const located = locateOnRoadLine(coordinates, ratio);
+  if (!located) return [];
+  const prefix = coordinates.slice(0, located.edgeIndex + 1);
+  if (!prefix.length || roadDistanceKm(prefix.at(-1), located.point) >= 0.000001) prefix.push(located.point);
+  return prefix;
+}
+
+function remainingRoadFeatures(status, vehicles) {
+  if (!status || !vehicles?.length || status.geometry_quality !== 'osm_road_route') return [];
+  const geometryById = new Map((status.shape?.features || []).map((feature) => [feature.properties?.segment_id, feature.geometry]));
+  const stops = status.route?.stop_ids || [];
+  const segments = stops.slice(0, -1).map((stopId, index) => status.segments.find((segment) =>
+    segment.from_stop_id === stopId && segment.to_stop_id === stops[index + 1]
+  ));
+  if (!segments.length || segments.some((segment) => !segment)) return [];
+  const lengths = segments.map((segment) => Number(segment.distance_km));
+  const segmentStarts = [];
+  const totalKm = lengths.reduce((sum, length) => {
+    segmentStarts.push(sum);
+    return sum + length;
+  }, 0);
+  if (!totalKm) return [];
+
+  return vehicles.flatMap((vehicle) => {
+    const reverse = vehicle.direction === 'reverse';
+    const storedProgress = Number(vehicle.progress_km);
+    const progress = Math.max(0, Math.min(totalKm, reverse ? totalKm - storedProgress : storedProgress));
+    const features = [];
+    let needsSharedStart = true;
+    const appendFeature = (segment, coordinates) => {
+      if (coordinates.length < 2) return;
+      if (needsSharedStart) {
+        coordinates = [[Number(vehicle.longitude), Number(vehicle.latitude)], ...coordinates];
+        needsSharedStart = false;
+      }
+      features.push({
+        type: 'Feature',
+        geometry: { type: 'LineString', coordinates },
+        properties: { is_remaining_route: true, reporter_type: vehicle.reporter_type || 'commuter', segment_id: segment.segment_id }
+      });
+    };
+
+    if (!reverse) {
+      segments.forEach((segment, index) => {
+        const segmentStart = segmentStarts[index];
+        const segmentEndKm = segmentStart + lengths[index];
+        if (progress < segmentEndKm) {
+          const coordinates = geometryById.get(segment.segment_id)?.coordinates || [];
+          const ratio = Math.max(0, (progress - segmentStart) / Math.max(lengths[index], 0.001));
+          appendFeature(segment, progress > segmentStart ? sliceRoadLineFrom(coordinates, ratio) : coordinates);
+        }
+      });
+    } else {
+      for (let index = segments.length - 1; index >= 0; index -= 1) {
+        const segment = segments[index];
+        const segmentStart = segmentStarts[index];
+        const segmentEndKm = segmentStart + lengths[index];
+        if (progress > segmentStart) {
+          const coordinates = geometryById.get(segment.segment_id)?.coordinates || [];
+          const ratio = Math.max(0, Math.min(1, (progress - segmentStart) / Math.max(lengths[index], 0.001)));
+          appendFeature(segment, progress < segmentEndKm ? sliceRoadLineTo(coordinates, ratio).reverse() : [...coordinates].reverse());
+        }
+      }
+    }
+    return features;
+  });
+}
+
+function roadLocationAtProgress(status, progressKm) {
+  const featureById = new Map((status.shape?.features || []).map((feature) => [feature.properties?.segment_id, feature.geometry]));
+  const stopIds = status.route?.stop_ids || [];
+  const segments = stopIds.slice(0, -1).map((stopId, index) => status.segments.find((segment) =>
+    segment.from_stop_id === stopId && segment.to_stop_id === stopIds[index + 1]
+  ));
+  let distanceBeforeKm = 0;
+  for (const segment of segments) {
+    if (!segment) return null;
+    const lengthKm = Number(segment.distance_km);
+    const geometry = featureById.get(segment.segment_id);
+    if (progressKm <= distanceBeforeKm + lengthKm && geometry?.coordinates?.length) {
+      return locateOnRoadLine(geometry.coordinates, (progressKm - distanceBeforeKm) / Math.max(lengthKm, 0.001))?.point || null;
+    }
+    distanceBeforeKm += lengthKm;
+  }
+  const lastSegment = segments.at(-1);
+  return lastSegment ? featureById.get(lastSegment.segment_id)?.coordinates?.at(-1) || null : null;
+}
+
+function updateMapRouteCopy(status, vehicles = state.vehicles) {
+  const hasRoadRoute = status?.geometry_quality === 'osm_road_route';
+  $('#map-caption').textContent = !hasRoadRoute
+    ? 'OpenStreetMap streets · road route unavailable'
+    : vehicles?.length ? 'OpenStreetMap streets · active route from shared location' : 'OpenStreetMap streets · road-following corridor route';
+  $('#map-footnote-copy').textContent = !hasRoadRoute
+    ? 'Road-following line could not be loaded. Stop locations are approximate planning anchors.'
+    : vehicles?.length ? 'Highlighted road line starts at the shared location and follows the vehicle direction.' : 'Corridor line follows mapped roads; stop locations remain approximate planning anchors.';
 }
 
 function drawSchematic(status, waves) {
@@ -60,17 +192,25 @@ function drawSchematic(status, waves) {
   svg.style.display = 'block';
   $('#osm-map').style.display = 'none';
   const stops = status.stops;
+  const roadFeatures = state.vehicles.length ? remainingRoadFeatures(status, state.vehicles) : status.shape?.features || [];
+  const roadCoordinates = roadFeatures.flatMap((feature) => feature.geometry?.coordinates || []);
+  const boundsPoints = [...stops.map((stop) => ({ lat: stop.lat, lng: stop.lng })), ...roadCoordinates.map(([lng, lat]) => ({ lat, lng }))];
   const left = 65, right = 840, top = 62, bottom = 326;
-  const minLng = Math.min(...stops.map((s) => s.lng)), maxLng = Math.max(...stops.map((s) => s.lng));
-  const minLat = Math.min(...stops.map((s) => s.lat)), maxLat = Math.max(...stops.map((s) => s.lat));
+  const minLng = Math.min(...boundsPoints.map((point) => point.lng)), maxLng = Math.max(...boundsPoints.map((point) => point.lng));
+  const minLat = Math.min(...boundsPoints.map((point) => point.lat)), maxLat = Math.max(...boundsPoints.map((point) => point.lat));
   const px = (stop) => left + ((stop.lng - minLng) / (maxLng - minLng || 1)) * (right - left);
   const py = (stop) => bottom - ((stop.lat - minLat) / (maxLat - minLat || 1)) * (bottom - top);
-  const coords = stops.map((stop) => `${px(stop)},${py(stop)}`).join(' ');
   let body = '<rect class="schematic-bg" x="0" y="0" width="900" height="390"/>';
-  body += `<path class="schematic-water" d="M 0 287 Q 220 240 360 265 T 900 224"/><polyline class="schematic-road" points="${coords}"/>`;
-  status.segments.forEach((segment, index) => {
-    const a = stops[index], b = stops[index + 1];
-    body += `<line class="schematic-track ${statusColor(segment.congestion_level)}" x1="${px(a)}" y1="${py(a)}" x2="${px(b)}" y2="${py(b)}"/>`;
+  body += '<path class="schematic-water" d="M 0 287 Q 220 240 360 265 T 900 224"/>';
+  roadFeatures.forEach((feature) => {
+    const path = (feature.geometry?.coordinates || []).map(([lng, lat], index) =>
+      `${index ? 'L' : 'M'} ${px({ lng })} ${py({ lat })}`
+    ).join(' ');
+    if (!path) return;
+    const level = feature.properties?.is_remaining_route
+      ? feature.properties.reporter_type === 'demo' ? 'demo' : 'live'
+      : statusColor(feature.properties?.congestion_level);
+    body += `<path class="schematic-road" d="${path}"/><path class="schematic-track ${level}" d="${path}"/>`;
   });
   stops.forEach((stop, index) => {
     const anchor = index < 2 ? 'start' : index > stops.length - 3 ? 'end' : 'middle';
@@ -122,6 +262,10 @@ function initializeOsm(status, waves, L) {
   }).addTo(state.map);
   state.routeLayer = L.geoJSON(null, {
     style: (feature) => {
+      if (feature.properties?.is_remaining_route) {
+        const simulated = feature.properties.reporter_type === 'demo';
+        return { color: simulated ? '#8655a7' : '#16705b', weight: 6, opacity: 0.96, dashArray: simulated ? '7 5' : null };
+      }
       const level = feature.properties?.congestion_level;
       return { color: level === 'SEVERE' ? '#d16d53' : level === 'MODERATE' ? '#e5b34d' : '#32896b', weight: 4, opacity: 0.88, dashArray: '7 6' };
     }
@@ -132,17 +276,27 @@ function initializeOsm(status, waves, L) {
   state.mapReady = true;
   updateOsmLayers(status, waves);
   updateLiveVehicleLayer(state.vehicles);
-  const bounds = L.latLngBounds(status.stops.map((stop) => [stop.lat, stop.lng]));
+  const routePoints = (status.shape?.features || []).flatMap((feature) => feature.geometry?.coordinates || [])
+    .map(([lng, lat]) => [lat, lng]);
+  const bounds = L.latLngBounds([...status.stops.map((stop) => [stop.lat, stop.lng]), ...routePoints]);
   state.map.fitBounds(bounds, { padding: [24, 24], maxZoom: 11 });
   window.setTimeout(() => state.map?.invalidateSize(), 0);
-  $('#map-caption').textContent = 'OpenStreetMap streets · estimated corridor overlays';
+  updateMapRouteCopy(status);
   return true;
+}
+
+function updateRoadRouteLayer(status, vehicles = state.vehicles) {
+  if (!state.mapReady || !state.routeLayer || !status) return;
+  const features = vehicles?.length
+    ? remainingRoadFeatures(status, vehicles)
+    : status.shape?.features || [];
+  state.routeLayer.clearLayers();
+  state.routeLayer.addData({ type: 'FeatureCollection', features });
 }
 
 function updateOsmLayers(status, waves) {
   if (!state.mapReady || !window.L) return;
-  state.routeLayer.clearLayers();
-  state.routeLayer.addData(status.shape);
+  updateRoadRouteLayer(status, state.vehicles);
   state.stopLayer.clearLayers();
   status.stops.forEach((stop) => {
     const eta = formatDuration(stop.eta_from_origin_sec || 0);
@@ -185,16 +339,21 @@ function routeDirectionLabel(direction) {
 }
 
 function updateLiveVehicleLayer(vehicles) {
-  if (!state.mapReady || !window.L || !state.liveVehicleLayer) return;
+  if (!state.mapReady || !window.L || !state.liveVehicleLayer) {
+    if (state.status && !state.mapReady) drawSchematic(state.status, state.waves);
+    return;
+  }
   state.liveVehicleLayer.clearLayers();
   vehicles.forEach((vehicle) => {
     const nextStop = vehicle.next_stop ? escapeHtml(shortName(vehicle.next_stop.stop_name)) : 'no downstream checkpoint';
     const eta = vehicle.next_stop ? `~${vehicle.next_stop.eta_minutes} min ±${vehicle.next_stop.confidence_window_minutes} min` : 'ETA unavailable';
     window.L.marker([vehicle.latitude, vehicle.longitude], {
       icon: window.L.divIcon({ className: 'live-vehicle-marker', html: '<span></span>', iconSize: [16, 16], iconAnchor: [8, 8] })
-    }).bindPopup(`<strong>Live phone report</strong><br>${escapeHtml(vehicle.vehicle_type)} · ${escapeHtml(routeDirectionLabel(vehicle.direction))}<br>Next checkpoint: ${nextStop} · ${eta}<br>Location updated ${vehicle.age_seconds}s ago`)
+    }).bindPopup(`<strong>${vehicle.reporter_type === 'demo' ? 'Demo simulation' : 'Live phone report'}</strong><br>${escapeHtml(vehicle.vehicle_type)} · ${escapeHtml(routeDirectionLabel(vehicle.direction))}<br>Next checkpoint: ${nextStop} · ${eta}<br>Location updated ${vehicle.age_seconds}s ago`)
       .addTo(state.liveVehicleLayer);
   });
+  updateRoadRouteLayer(state.status, vehicles);
+  updateMapRouteCopy(state.status, vehicles);
 }
 
 function renderLiveVehicles(data) {
@@ -205,7 +364,7 @@ function renderLiveVehicles(data) {
     ? 'Road times use live traffic estimates.'
     : 'Road times use historical or seeded estimates.';
   const reportSummary = vehicles.length
-    ? `${vehicles.length} live phone report${vehicles.length === 1 ? '' : 's'} updated within 90 seconds.`
+    ? `${vehicles.length} active phone report${vehicles.length === 1 ? '' : 's'} updated within 90 seconds${vehicles.some((vehicle) => vehicle.reporter_type === 'demo') ? ' (includes local demo)' : ''}.`
     : 'No active bus phone reports; scheduled waves are estimates.';
   $('#summary-source').textContent = `${roadEstimate} ${reportSummary}`;
   const selectedStopId = $('#live-stop-select').value;
@@ -222,10 +381,11 @@ function renderLiveVehicles(data) {
   } else {
     list.innerHTML = matches.map(({ vehicle, arrival }) => {
       const label = vehicle.vehicle_type === 'van' ? 'Van / UV' : vehicle.vehicle_type === 'jeepney' ? 'Jeepney' : 'Bus';
+      const reporter = vehicle.reporter_type === 'demo' ? 'DEMO SIMULATION' : vehicle.reporter_type === 'driver' ? 'DRIVER REPORT' : 'RIDER REPORT';
       const stop = escapeHtml(shortName(arrival.stop_name));
       const direction = escapeHtml(routeDirectionLabel(vehicle.direction));
       const accuracy = Math.max(10, Math.round(Number(vehicle.accuracy_m) / 10) * 10);
-      return `<article class="live-vehicle-card"><div class="live-vehicle-heading"><strong>${label}</strong><span>LIVE REPORT</span></div><p>${direction} · location ${vehicle.age_seconds}s ago · ±${accuracy}m</p><div><strong>~${arrival.eta_minutes} min</strong> to ${stop}</div><small>Estimate window: ±${arrival.confidence_window_minutes} min</small></article>`;
+      return `<article class="live-vehicle-card"><div class="live-vehicle-heading"><strong>${label}</strong><span>${reporter}</span></div><p>${direction} · location ${vehicle.age_seconds}s ago · ±${accuracy}m</p><div><strong>~${arrival.eta_minutes} min</strong> to ${stop}</div><small>Estimate window: ±${arrival.confidence_window_minutes} min</small></article>`;
     }).join('');
   }
   updateLiveVehicleLayer(vehicles);
@@ -254,7 +414,7 @@ async function sendDriverLocation(position) {
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || 'Could not share this location.');
-    setDriverStatus(`Sharing location · accuracy ±${Math.round(position.coords.accuracy)}m`);
+    setDriverStatus(`${driverSession.isDemo ? 'Demo simulation' : 'Sharing location'} · accuracy ±${Math.round(position.coords.accuracy)}m`);
     await refreshVehicles();
   } catch (error) {
     setDriverStatus(error.message, true);
@@ -267,13 +427,18 @@ async function endDriverTrip(showMessage = true) {
   const tripId = driverSession.tripId;
   const token = driverSession.reporterToken;
   if (driverSession.watchId != null) navigator.geolocation.clearWatch(driverSession.watchId);
+  if (driverSession.demoTimer != null) window.clearInterval(driverSession.demoTimer);
   driverSession.tripId = null;
   driverSession.reporterToken = null;
   driverSession.watchId = null;
+  driverSession.demoTimer = null;
+  driverSession.demoStartedAt = 0;
+  driverSession.isDemo = false;
   driverSession.lastSentAt = 0;
   driverSession.sending = false;
   $('#driver-stop').disabled = true;
   $('#driver-start').disabled = false;
+  $('#demo-start').disabled = !state.status || state.status.geometry_quality !== 'osm_road_route';
   if (tripId && token) {
     try {
       await fetch(`/api/v1/corridors/${encodeURIComponent(CORRIDOR_ID)}/vehicle-trips/${encodeURIComponent(tripId)}/end`, {
@@ -290,25 +455,12 @@ async function startDriverTrip(event) {
   if (driverSession.tripId) return;
   const button = $('#driver-start');
   button.disabled = true;
+  $('#demo-start').disabled = true;
   setDriverStatus('Starting trip…');
   try {
     if (!window.isSecureContext) throw new Error('Location sharing requires HTTPS or localhost.');
     if (!navigator.geolocation) throw new Error('This browser does not provide phone location.');
-    const accessCode = $('#driver-access-code').value;
-    const response = await fetch(`/api/v1/corridors/${encodeURIComponent(CORRIDOR_ID)}/vehicle-trips`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        access_code: accessCode,
-        route_id: state.status.route.route_id,
-        vehicle_type: $('#driver-vehicle-type').value,
-        direction: $('#driver-direction').value
-      })
-    });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error || 'Could not start trip reporting.');
-    driverSession.tripId = result.trip_id;
-    driverSession.reporterToken = result.reporter_token;
-    $('#driver-access-code').value = '';
+    await createLocationTrip($('#reporter-type').value);
     $('#driver-stop').disabled = false;
     setDriverStatus('Trip started. Waiting for a good phone location fix…');
     driverSession.watchId = navigator.geolocation.watchPosition(
@@ -324,7 +476,71 @@ async function startDriverTrip(event) {
     const message = error.message;
     if (driverSession.tripId) await endDriverTrip(false);
     button.disabled = false;
+    $('#demo-start').disabled = !state.status || state.status.geometry_quality !== 'osm_road_route';
     setDriverStatus(message, true);
+  }
+}
+
+async function createLocationTrip(reporterType) {
+  const response = await fetch(`/api/v1/corridors/${encodeURIComponent(CORRIDOR_ID)}/vehicle-trips`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      route_id: state.status.route.route_id,
+      vehicle_type: $('#driver-vehicle-type').value,
+      direction: $('#driver-direction').value,
+      reporter_type: reporterType
+    })
+  });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || 'Could not start trip reporting.');
+  driverSession.tripId = result.trip_id;
+  driverSession.reporterToken = result.reporter_token;
+}
+
+async function startDemoTrip() {
+  if (driverSession.tripId) return;
+  const button = $('#demo-start');
+  const speedMultiplier = Number($('#demo-speed').value) || 10;
+  const totalKm = state.status?.segments.reduce((sum, segment) => sum + Number(segment.distance_km), 0) || 0;
+  if (state.status?.geometry_quality !== 'osm_road_route' || !totalKm) {
+    setDriverStatus('Load the road route before starting the local simulation.', true);
+    return;
+  }
+  button.disabled = true;
+  $('#driver-start').disabled = true;
+  setDriverStatus(`Starting local demo at ${speedMultiplier}× speed…`);
+  try {
+    await createLocationTrip('demo');
+    driverSession.isDemo = true;
+    driverSession.demoSpeedMultiplier = speedMultiplier;
+    driverSession.demoStartedAt = Date.now();
+    $('#driver-stop').disabled = false;
+    const tick = async () => {
+      if (!driverSession.tripId) return;
+      const elapsedSeconds = (Date.now() - driverSession.demoStartedAt) / 1000;
+      const traveledKm = Math.min(totalKm, elapsedSeconds * (35 * speedMultiplier / 3.6) / 1000);
+      const forwardProgress = $('#driver-direction').value === 'reverse' ? totalKm - traveledKm : traveledKm;
+      const point = roadLocationAtProgress(state.status, forwardProgress);
+      if (!point) throw new Error('Could not place the demo vehicle on the road route.');
+      await sendDriverLocation({ coords: { longitude: point[0], latitude: point[1], accuracy: 12 } });
+      if (traveledKm >= totalKm && driverSession.demoTimer != null) {
+        window.clearInterval(driverSession.demoTimer);
+        driverSession.demoTimer = null;
+        setDriverStatus('Demo reached the end of the corridor. End trip to clear the test report.');
+      }
+    };
+    await tick();
+    if (driverSession.tripId) driverSession.demoTimer = window.setInterval(() => {
+      tick().catch((error) => {
+        setDriverStatus(error.message, true);
+        endDriverTrip(false).catch(() => {});
+      });
+    }, 8_500);
+  } catch (error) {
+    if (driverSession.tripId) await endDriverTrip(false);
+    button.disabled = false;
+    $('#driver-start').disabled = false;
+    setDriverStatus(error.message, true);
   }
 }
 
@@ -355,6 +571,8 @@ function renderStatus(status, waves) {
   pill.innerHTML = `<i></i>${!hasCurrentRouting ? 'Baseline only' : level === 'heavy' ? 'Heavy delays' : level === 'slow' ? 'Moving slowly' : 'Running clear'}`;
   $('#wave-count').textContent = `${waves?.waves?.length || 0} shown`;
   $('#updated-at').textContent = status.source === 'live_routing' || status.source === 'mixed' ? `Updated ${new Date(status.as_of).toLocaleTimeString('en-PH', { timeZone: 'Asia/Manila', hour: 'numeric', minute: '2-digit' })}` : 'Planning baseline';
+  updateMapRouteCopy(status, state.vehicles);
+  $('#demo-start').disabled = status.geometry_quality !== 'osm_road_route' || Boolean(driverSession.tripId);
   $('#data-mode').textContent = status.source === 'live_routing' ? 'Live routing estimate' : status.source === 'mixed' ? 'Mixed traffic estimate' : 'Baseline estimate';
   const connectionDot = $('.topbar-meta .live-dot');
   connectionDot.style.background = hasCurrentRouting ? '#91c9a8' : '#a9b7ae';
@@ -452,6 +670,11 @@ function setMapMaximized(maximized) {
 
 async function initialize() {
   $('#arrival-time').value = phtDateTimeInput();
+  const localDemoAvailable = ['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname);
+  $('#demo-start').hidden = !localDemoAvailable;
+  $('#demo-speed-label').hidden = !localDemoAvailable;
+  $('#demo-note').hidden = !localDemoAvailable;
+  $('#demo-start').addEventListener('click', startDemoTrip);
   $('#map-maximize').addEventListener('click', () => {
     setMapMaximized(!$('.map-card').classList.contains('is-maximized'));
   });
