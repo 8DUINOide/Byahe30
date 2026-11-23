@@ -1,4 +1,5 @@
 import { listSeeds, loadSeedById } from '../config.mjs';
+import { getRoadRouteGeometries } from '../road-routing.mjs';
 
 if (!process.env.DATABASE_URL) throw new Error('Set DATABASE_URL to the target PostgreSQL or Supabase database.');
 const { Pool } = await import('pg');
@@ -8,6 +9,7 @@ const seeds = process.env.BYAHE30_CORRIDOR_ID
   : (await listSeeds()).filter((seed) => seed.corridor.is_active);
 
 async function seedCorridor(seed) {
+  const roadGeometries = await getRoadRouteGeometries(seed);
   const client = await pool.connect();
   const { corridor } = seed;
   try {
@@ -35,14 +37,13 @@ async function seedCorridor(seed) {
     }
 
     for (const segment of seed.segments) {
-      const from = seed.stops.find((stop) => stop.stop_id === segment.from_stop_id);
-      const to = seed.stops.find((stop) => stop.stop_id === segment.to_stop_id);
-      const geometry = { type: 'LineString', coordinates: [[from.lng, from.lat], [to.lng, to.lat]] };
+      const geometry = roadGeometries?.get(segment.segment_id) || segment.road_geometry || null;
       await client.query(`
         insert into segments (segment_id, corridor_id, from_stop_id, to_stop_id, distance_km, baseline_duration_sec, polyline_geojson, route_geometry)
-        values ($1, $2, $3, $4, $5, $6, $7::jsonb, st_setsrid(st_makeline(st_makepoint($8, $9), st_makepoint($10, $11)), 4326))
+        values ($1, $2, $3, $4, $5, $6, $7::jsonb,
+          case when $7::jsonb is null then null else st_setsrid(st_geomfromgeojson($7::jsonb::text), 4326) end)
         on conflict (segment_id) do update set distance_km = excluded.distance_km, baseline_duration_sec = excluded.baseline_duration_sec, polyline_geojson = excluded.polyline_geojson, route_geometry = excluded.route_geometry
-      `, [segment.segment_id, corridor.id, segment.from_stop_id, segment.to_stop_id, segment.distance_km, segment.baseline_duration_sec, JSON.stringify(geometry), from.lng, from.lat, to.lng, to.lat]);
+      `, [segment.segment_id, corridor.id, segment.from_stop_id, segment.to_stop_id, segment.distance_km, segment.baseline_duration_sec, geometry ? JSON.stringify(geometry) : null]);
     }
 
     for (const schedule of seed.headway_schedules) {

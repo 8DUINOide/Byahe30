@@ -3,7 +3,7 @@ import { getPrimaryRoute, getSegmentMetric } from './path.mjs';
 const METERS_PER_DEGREE_LAT = 110_540;
 const MAX_ROUTE_DISTANCE_M = 2_500;
 
-export function projectOntoCorridor(seed, latitude, longitude, route = getPrimaryRoute(seed)) {
+export function projectOntoCorridor(seed, latitude, longitude, route = getPrimaryRoute(seed), roadGeometries = null) {
   const stopById = new Map(seed.stops.map((stop) => [stop.stop_id, stop]));
   const stops = (route?.stop_ids || []).map((stopId) => stopById.get(stopId)).filter(Boolean);
   const segmentByPair = new Map(seed.segments.map((segment) => [`${segment.from_stop_id}:${segment.to_stop_id}`, segment]));
@@ -16,25 +16,33 @@ export function projectOntoCorridor(seed, latitude, longitude, route = getPrimar
     const segment = segmentByPair.get(`${from.stop_id}:${to.stop_id}`);
     if (!segment) continue;
 
-    const latitudeScale = METERS_PER_DEGREE_LAT;
+    const coordinates = roadGeometries?.get(segment.segment_id)?.coordinates || [[from.lng, from.lat], [to.lng, to.lat]];
     const longitudeScale = METERS_PER_DEGREE_LAT * Math.cos(((latitude + from.lat + to.lat) / 3) * Math.PI / 180);
-    const ax = (from.lng - longitude) * longitudeScale;
-    const ay = (from.lat - latitude) * latitudeScale;
-    const bx = (to.lng - longitude) * longitudeScale;
-    const by = (to.lat - latitude) * latitudeScale;
-    const dx = bx - ax;
-    const dy = by - ay;
-    const lengthSquared = dx * dx + dy * dy;
-    const fraction = lengthSquared ? Math.max(0, Math.min(1, -((ax * dx) + (ay * dy)) / lengthSquared)) : 0;
-    const offsetX = ax + fraction * dx;
-    const offsetY = ay + fraction * dy;
-    const distanceM = Math.hypot(offsetX, offsetY);
-    if (!closest || distanceM < closest.distance_to_route_m) {
-      closest = {
-        distance_to_route_m: distanceM,
-        progress_km: distanceBeforeKm + (Number(segment.distance_km) * fraction),
-        segment_index: index
-      };
+    const points = coordinates.map(([lng, lat]) => [(lng - longitude) * longitudeScale, (lat - latitude) * METERS_PER_DEGREE_LAT]);
+    const edgeLengths = points.slice(0, -1).map((point, edgeIndex) => Math.hypot(
+      points[edgeIndex + 1][0] - point[0], points[edgeIndex + 1][1] - point[1]
+    ));
+    const geometryLengthM = edgeLengths.reduce((sum, length) => sum + length, 0);
+    let traversedM = 0;
+    for (let edgeIndex = 0; edgeIndex < edgeLengths.length; edgeIndex += 1) {
+      const [ax, ay] = points[edgeIndex];
+      const [bx, by] = points[edgeIndex + 1];
+      const dx = bx - ax;
+      const dy = by - ay;
+      const length = edgeLengths[edgeIndex];
+      const lengthSquared = dx * dx + dy * dy;
+      const fraction = lengthSquared ? Math.max(0, Math.min(1, -((ax * dx) + (ay * dy)) / lengthSquared)) : 0;
+      const offsetX = ax + fraction * dx;
+      const offsetY = ay + fraction * dy;
+      const distanceM = Math.hypot(offsetX, offsetY);
+      if (!closest || distanceM < closest.distance_to_route_m) {
+        closest = {
+          distance_to_route_m: distanceM,
+          progress_km: distanceBeforeKm + (Number(segment.distance_km) * ((traversedM + (length * fraction)) / Math.max(geometryLengthM, 0.001))),
+          segment_index: index
+        };
+      }
+      traversedM += length;
     }
     distanceBeforeKm += Number(segment.distance_km);
   }
@@ -56,7 +64,8 @@ export function getVehicleArrivals({ seed, route = getPrimaryRoute(seed), metric
   for (const segment of segments) stopProgress.push(stopProgress.at(-1) + Number(segment.distance_km));
   const totalDistanceKm = stopProgress.at(-1) || 0;
   const reverse = direction === 'reverse';
-  const clampedProgress = Math.max(0, Math.min(totalDistanceKm, Number(progressKm)));
+  const directionProgress = Math.max(0, Math.min(totalDistanceKm, Number(progressKm)));
+  const clampedProgress = reverse ? totalDistanceKm - directionProgress : directionProgress;
 
   const travelSecondsBetween = (startKm, endKm) => {
     const low = Math.min(startKm, endKm);

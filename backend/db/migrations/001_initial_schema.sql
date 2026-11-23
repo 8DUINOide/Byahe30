@@ -84,6 +84,7 @@ create table if not exists live_vehicle_trips (
     corridor_id text not null references corridors(id) on delete cascade,
     route_id text not null references routes(route_id) on delete cascade,
     vehicle_type text not null check (vehicle_type in ('van', 'jeepney', 'bus')),
+    reporter_type text not null default 'driver' check (reporter_type in ('driver', 'commuter', 'demo')),
     direction text not null check (direction in ('forward', 'reverse')),
     reporter_token_hash char(64) not null,
     started_at timestamptz not null default now(),
@@ -97,6 +98,16 @@ create table if not exists live_vehicle_trips (
     observed_speed_mps double precision check (observed_speed_mps is null or observed_speed_mps between 0 and 40),
     ended_at timestamptz
 );
+
+alter table live_vehicle_trips
+    add column if not exists reporter_type text not null default 'driver';
+
+alter table live_vehicle_trips
+    drop constraint if exists live_vehicle_trips_reporter_type_check;
+
+alter table live_vehicle_trips
+    add constraint live_vehicle_trips_reporter_type_check
+    check (reporter_type in ('driver', 'commuter', 'demo'));
 
 create index if not exists live_vehicle_corridor_seen_idx
     on live_vehicle_trips (corridor_id, last_seen_at desc)

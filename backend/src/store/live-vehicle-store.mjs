@@ -19,6 +19,7 @@ function publicTrip(row) {
     corridor_id: row.corridor_id,
     route_id: row.route_id,
     vehicle_type: row.vehicle_type,
+    reporter_type: row.reporter_type || 'driver',
     direction: row.direction,
     latitude: Number(row.latitude),
     longitude: Number(row.longitude),
@@ -35,7 +36,7 @@ export class LiveVehicleStore {
     this.trips = new Map();
   }
 
-  async start({ corridorId, routeId, vehicleType, direction }) {
+  async start({ corridorId, routeId, vehicleType, direction, reporterType = 'commuter' }) {
     const tripId = randomUUID();
     const reporterToken = randomBytes(32).toString('base64url');
     const tokenHash = hashToken(reporterToken);
@@ -43,13 +44,13 @@ export class LiveVehicleStore {
     if (this.pool) {
       await this.pool.query(`
         insert into live_vehicle_trips
-          (trip_id, corridor_id, route_id, vehicle_type, direction, reporter_token_hash, started_at, last_seen_at)
-        values ($1, $2, $3, $4, $5, $6, $7, $7)
-      `, [tripId, corridorId, routeId, vehicleType, direction, tokenHash, startedAt]);
+          (trip_id, corridor_id, route_id, vehicle_type, reporter_type, direction, reporter_token_hash, started_at, last_seen_at)
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $8)
+      `, [tripId, corridorId, routeId, vehicleType, reporterType, direction, tokenHash, startedAt]);
     } else {
       this.trips.set(tripId, {
         trip_id: tripId, corridor_id: corridorId, route_id: routeId,
-        vehicle_type: vehicleType, direction, reporter_token_hash: tokenHash,
+        vehicle_type: vehicleType, reporter_type: reporterType, direction, reporter_token_hash: tokenHash,
         started_at: startedAt.toISOString(), last_seen_at: startedAt.toISOString(),
         latitude: null, longitude: null, accuracy_m: null, progress_km: null,
         previous_progress_km: null, previous_position_at: null, observed_speed_mps: null
@@ -122,7 +123,7 @@ export class LiveVehicleStore {
         where ended_at is not null or last_seen_at < now() - interval '30 minutes'
       `);
       const result = await this.pool.query(`
-        select trip_id, corridor_id, route_id, vehicle_type, direction,
+        select trip_id, corridor_id, route_id, vehicle_type, reporter_type, direction,
                latitude, longitude, accuracy_m, progress_km, observed_speed_mps, last_seen_at
         from live_vehicle_trips
         where corridor_id = $1 and ended_at is null and latitude is not null

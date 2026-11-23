@@ -1,5 +1,4 @@
 import { createServer } from 'node:http';
-import { timingSafeEqual } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { FRONTEND_DIR, listSeeds, loadSeedById } from './config.mjs';
@@ -12,6 +11,7 @@ import { getPollingPolicy } from './scheduler.mjs';
 import { formatPht } from './time.mjs';
 import { projectOntoCorridor, getVehicleArrivals } from './engines/live-vehicles.mjs';
 import { LiveVehicleStore } from './store/live-vehicle-store.mjs';
+import { getRoadRouteGeometries } from './road-routing.mjs';
 
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8',
@@ -70,32 +70,9 @@ function congestionLevel(ratio) {
   return ratio > 1.6 ? 'SEVERE' : ratio >= 1.2 ? 'MODERATE' : 'CLEAR';
 }
 
-function secretMatches(candidate, expected) {
-  if (typeof candidate !== 'string' || !expected) return false;
-  const a = Buffer.from(candidate, 'utf8');
-  const b = Buffer.from(expected, 'utf8');
-  return a.length === b.length && timingSafeEqual(a, b);
-}
-
-function driverAuthToken(req) {
+function reporterAuthToken(req) {
   const match = String(req.headers.authorization || '').match(/^Bearer ([A-Za-z0-9_-]{32,})$/);
   return match?.[1] || null;
-}
-
-function canStartTrip(ip, failures, now = Date.now()) {
-  const record = failures.get(ip);
-  if (!record) return true;
-  if (record.blockedUntil && record.blockedUntil > now) return false;
-  if (record.windowEndsAt <= now) failures.delete(ip);
-  return true;
-}
-
-function noteFailedTripStart(ip, failures, now = Date.now()) {
-  const record = failures.get(ip);
-  const active = record && record.windowEndsAt > now ? record : { attempts: 0, windowEndsAt: now + 10 * 60_000 };
-  active.attempts += 1;
-  if (active.attempts >= 5) active.blockedUntil = now + 10 * 60_000;
-  failures.set(ip, active);
 }
 
 async function serveStatic(req, res, url) {
@@ -121,7 +98,6 @@ async function serveStatic(req, res, url) {
 }
 
 export function createApiServer({ seedLoader = loadSeedById, listSeedLoader = listSeeds, store = new TelemetryStore(), liveVehicleStore = new LiveVehicleStore() } = {}) {
-  const failedTripStarts = new Map();
   return createServer(async (req, res) => {
     const url = new URL(req.url || '/', 'http://localhost');
     try {
@@ -170,23 +146,17 @@ export function createApiServer({ seedLoader = loadSeedById, listSeedLoader = li
 
       if (vehicleTripStartMatch && req.method === 'POST') {
         const corridorId = decodeURIComponent(vehicleTripStartMatch[1]);
-        const accessCode = process.env.BYAHE30_DRIVER_ACCESS_CODE;
-        if (!accessCode) {
-          sendJson(res, 503, { error: 'Driver location reporting is disabled. Configure BYAHE30_DRIVER_ACCESS_CODE on the server.' });
-          return;
-        }
-        const ip = req.socket.remoteAddress || 'unknown';
-        if (!canStartTrip(ip, failedTripStarts)) {
-          sendJson(res, 429, { error: 'Too many invalid driver access codes. Try again in 10 minutes.' });
-          return;
-        }
         const body = await readJson(req);
-        if (!secretMatches(body.access_code, accessCode)) {
-          noteFailedTripStart(ip, failedTripStarts);
-          sendJson(res, 401, { error: 'Driver access code is incorrect.' });
+        const reporterType = body.reporter_type ?? 'commuter';
+        if (!['commuter', 'driver', 'demo'].includes(reporterType)) {
+          sendJson(res, 400, { error: 'reporter_type must be commuter, driver, or demo.' });
           return;
         }
-        failedTripStarts.delete(ip);
+        const requestHost = String(req.headers.host || '').replace(/:\d+$/, '').toLowerCase();
+        if (reporterType === 'demo' && (process.env.NODE_ENV === 'production' || !['localhost', '127.0.0.1', '[::1]'].includes(requestHost))) {
+          sendJson(res, 403, { error: 'Simulated location reports are available only on a local development server.' });
+          return;
+        }
         let seed;
         try { seed = await seedLoader(corridorId); }
         catch { sendJson(res, 404, { error: `Unknown corridor: ${corridorId}` }); return; }
@@ -207,7 +177,7 @@ export function createApiServer({ seedLoader = loadSeedById, listSeedLoader = li
           sendJson(res, 400, { error: 'direction must be forward or reverse.' });
           return;
         }
-        const trip = await liveVehicleStore.start({ corridorId, routeId: route.route_id, vehicleType: body.vehicle_type, direction: body.direction });
+        const trip = await liveVehicleStore.start({ corridorId, routeId: route.route_id, vehicleType: body.vehicle_type, direction: body.direction, reporterType });
         sendJson(res, 201, { ...trip, expires_after_seconds: 90, route_name: route.route_short_name });
         return;
       }
@@ -217,8 +187,8 @@ export function createApiServer({ seedLoader = loadSeedById, listSeedLoader = li
         let seed;
         try { seed = await seedLoader(corridorId); }
         catch { sendJson(res, 404, { error: `Unknown corridor: ${corridorId}` }); return; }
-        const token = driverAuthToken(req);
-        if (!token) { sendJson(res, 401, { error: 'Driver session is missing or expired.' }); return; }
+        const token = reporterAuthToken(req);
+        if (!token) { sendJson(res, 401, { error: 'Location-sharing session is missing or expired.' }); return; }
         const body = await readJson(req);
         const latitude = Number(body.latitude);
         const longitude = Number(body.longitude);
@@ -233,10 +203,11 @@ export function createApiServer({ seedLoader = loadSeedById, listSeedLoader = li
         }
         const tripId = decodeURIComponent(vehiclePositionMatch[2]);
         const context = await liveVehicleStore.getTripContext(tripId, corridorId, token);
-        if (!context) { sendJson(res, 401, { error: 'Driver session is missing or expired.' }); return; }
+        if (!context) { sendJson(res, 401, { error: 'Location-sharing session is missing or expired.' }); return; }
         const route = seed.routes.find((item) => item.route_id === context.route_id);
         if (!route) { sendJson(res, 422, { error: 'The active trip route is no longer available.' }); return; }
-        const projection = projectOntoCorridor(seed, latitude, longitude, route);
+        const roadGeometries = await getRoadRouteGeometries(seed);
+        const projection = projectOntoCorridor(seed, latitude, longitude, route, roadGeometries);
         if (!projection) {
           sendJson(res, 422, { error: 'This location is too far from the selected corridor to report.' });
           return;
@@ -247,18 +218,18 @@ export function createApiServer({ seedLoader = loadSeedById, listSeedLoader = li
           corridor_distance_km: projection.corridor_distance_km,
           route_distance_m: projection.distance_to_route_m
         });
-        if (!accepted) { sendJson(res, 401, { error: 'Driver session is missing or expired.' }); return; }
+        if (!accepted) { sendJson(res, 401, { error: 'Location-sharing session is missing or expired.' }); return; }
         sendJson(res, 200, { accepted: true, accuracy_m: accuracy, expires_after_seconds: 90 });
         return;
       }
 
       if (vehicleTripEndMatch && req.method === 'POST') {
-        const token = driverAuthToken(req);
-        if (!token) { sendJson(res, 401, { error: 'Driver session is missing or expired.' }); return; }
+        const token = reporterAuthToken(req);
+        if (!token) { sendJson(res, 401, { error: 'Location-sharing session is missing or expired.' }); return; }
         const corridorId = decodeURIComponent(vehicleTripEndMatch[1]);
         const tripId = decodeURIComponent(vehicleTripEndMatch[2]);
         const ended = await liveVehicleStore.end(tripId, corridorId, token);
-        if (!ended) { sendJson(res, 404, { error: 'Active driver trip was not found.' }); return; }
+        if (!ended) { sendJson(res, 404, { error: 'Active location-sharing trip was not found.' }); return; }
         sendJson(res, 200, { ended: true, corridor_id: corridorId });
         return;
       }
@@ -308,21 +279,21 @@ export function createApiServer({ seedLoader = loadSeedById, listSeedLoader = li
           });
           const sources = new Set(segments.map((item) => item.source));
           const bottlenecks = segments.filter((item) => item.congestion_level !== 'CLEAR');
-          const features = segments.map((segment) => {
-            const from = stops.find((stop) => stop.stop_id === segment.from_stop_id);
-            const to = stops.find((stop) => stop.stop_id === segment.to_stop_id);
-            return {
+          const roadGeometries = await getRoadRouteGeometries(seed);
+          const features = roadGeometries ? segments.flatMap((segment) => {
+            const geometry = roadGeometries.get(segment.segment_id);
+            return geometry ? [{
               type: 'Feature',
-              geometry: { type: 'LineString', coordinates: [[from.lng, from.lat], [to.lng, to.lat]] },
+              geometry,
               properties: { segment_id: segment.segment_id, congestion_ratio: segment.congestion_ratio, congestion_level: segment.congestion_level }
-            };
-          });
+            }] : [];
+          }) : [];
           sendJson(res, 200, {
             corridor: seed.corridor,
             route: getPrimaryRoute(seed),
             as_of: now.toISOString(),
             source: sources.size === 1 ? [...sources][0] : 'mixed',
-            geometry_quality: 'checkpoint_connector_estimate',
+            geometry_quality: features.length === segments.length ? 'osm_road_route' : 'unavailable',
             stops: stopsWithEtas,
             segments,
             bottlenecks,
