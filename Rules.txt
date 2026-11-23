@@ -1,0 +1,82 @@
+---
+
+### 2. Agentic AI Execution Instructions (`.clinerules` / `.windsurfrules` / `INSTRUCTIONS.md`)
+
+Save this as `.clinerules` (for Cline / Roo Code), `.windsurfrules` (for Windsurf), or `INSTRUCTIONS.md` so your coding agent executes the build autonomously in disciplined phases without over-engineering or hallucinating hardware dependencies:
+
+```markdown
+# Agentic AI Execution Instructions — Byahe30
+
+You are the lead full-stack and geospatial engineer building **Byahe30**, a 100% software-only commuter flow and ETA platform starting with the Baao–Pili–Naga–ADNU corridor in Camarines Sur, Philippines.
+
+Before writing any code, read `AGENT.md` and `README.md` to align with the project's data models and constraints.
+
+---
+
+## Core Constraints (Strictly Enforce)
+1. **Zero Hardware & Zero Crowdsourcing Dependency:** NEVER introduce GPS tracker ingestion, ESP32/RFID hardware schemas, or mandatory passenger "I'm On Board" reporting as core dependencies. Every feature must work out-of-the-box with zero active users.
+   Optional operator-authorized location sharing from a driver's existing phone may supplement the estimates; core commuter features must work when no vehicle is reporting.
+2. **Honest UX Framing:** NEVER render simulated/headway vehicles as exact GPS-tracked vehicles. Label them clearly as `"Estimated Wave"` or `"Scheduled Flow"` with confidence windows (`±X mins`).
+3. **API Quota Discipline:** Traffic/routing polling workers MUST enforce time-of-day intervals:
+   - Peak (`05:30–08:30` and `16:30–19:30` PHT, `Asia/Manila`): poll every `5 minutes`.
+   - Off-Peak (`08:31–16:29` and `19:31–21:30` PHT): poll every `15 minutes`.
+   - Late Night (`21:31–05:29` PHT): `0` live API calls; serve historical baseline profile.
+4. **Multi-Corridor Scalability:** Never hardcode `"Baao"` or `"Naga"` into core engine logic. All route segments, nodes, and headway rules must be loaded dynamically from GTFS-structured tables/JSON keyed by `corridor_id`.
+
+---
+
+## Step-by-Step Build Execution Plan
+
+Execute the project strictly in the following order. Verify each milestone before advancing to the next.
+
+### Step 1: Data & Database Schema (`data/` & `backend/db/`)
+- Create the PostgreSQL/PostGIS schema (compatible with Supabase) containing:
+  - `corridors` (`id`, `name`, `region`, `is_active`)
+  - `stops` (`stop_id`, `corridor_id`, `name`, `sequence_order`, `lat`, `lng`, `is_transfer_hub`)
+  - `segments` (`segment_id`, `corridor_id`, `from_stop_id`, `to_stop_id`, `distance_km`, `baseline_duration_sec`, `polyline_geojson`)
+  - `headway_schedules` (`schedule_id`, `corridor_id`, `vehicle_type`, `start_time`, `end_time`, `headway_minutes`, `day_type`)
+  - `telemetry_logs` (`id`, `segment_id`, `recorded_at`, `live_duration_sec`, `congestion_ratio`, `source`)
+- Create a seed file `data/gtfs/baao-naga/seed.json` with accurate ordered nodes:
+  1. `Baao Centro / Crossing` (Origin)
+  2. `Anayan / Bula Junction`
+  3. `Pili Centro / Capitol` (Transfer Hub)
+  4. `Palestina, Pili`
+  5. `Del Rosario (Naga Boundary)`
+  6. `Concepcion Pequeña / Grande`
+  7. `Naga Central / Eastbound Terminal` (Transfer Hub)
+  8. `Ateneo de Naga University (Bagumbayan)` (Destination)
+
+### Step 2: Traffic Telemetry & Fallback Worker (`backend/workers/`)
+- Build the scheduled polling service that fetches segment travel durations between consecutive stops in `segments`.
+- Implement a fallback handler: if the external routing API fails, rate-limits, or is in the Late Night window, compute expected duration from historical same-hour averages stored in `telemetry_logs` (falling back to `baseline_duration_sec`).
+- Include an optional weather adjustment hook (e.g., applying a configurable `1.15x–1.25x` delay multiplier when rain/storm conditions are active in Camarines Sur).
+
+### Step 3: Commuter Decision Engines (`backend/engines/`)
+- **Reverse-Departure Engine (`reverse_departure.py` / `.ts`):**
+  - Inputs: `origin_stop_id`, `destination_stop_id`, `target_arrival_time` (PHT), `vehicle_preference` (`van` | `jeepney` | `bus` | `any`).
+  - Calculation: Sum live segment durations + expected headway wait buffer (`0.5 * headway_minutes`) + last-mile buffer (if destination is ADNU from Naga terminal).
+  - Output: Exact `leave_home_by` timestamp, breakdown of travel vs. wait time, and congestion warning flags.
+- **Cut-Trip vs. Direct Comparator (`route_comparator.py` / `.ts`):**
+  - Compare total travel + wait time of a single direct trip (`Baao → Naga`) against splitting at `is_transfer_hub = true` nodes (`Baao → Pili` + transfer wait + `Pili → Naga`).
+- **Virtual Wave Spawner (`virtual_wave.py` / `.ts`):**
+  - Generate active virtual trip positions along `polyline_geojson` based on `headway_schedules` and live segment speeds (`distance_covered / live_duration_sec`).
+
+### Step 4: REST API Layer (`backend/api/`)
+- Expose clean JSON endpoints:
+  - `GET /api/v1/corridors/{corridor_id}/status` — Live segment speeds, congestion ratios, and bottleneck alerts.
+  - `GET /api/v1/corridors/{corridor_id}/waves` — Current estimated vehicle-wave positions for frontend rendering.
+  - `POST /api/v1/plan/reverse-departure` — Returns recommended departure time and direct vs. cut-trip recommendation.
+
+### Step 5: Leaflet + OpenStreetMap Frontend (`frontend/`)
+- Build a fast, mobile-first web interface (deployable as a static site or lightweight web app):
+  - Render the OpenStreetMap basemap with visible attribution and the corridor polyline color-coded by `congestion_ratio` (Green `< 1.2`, Amber `1.2–1.6`, Red `> 1.6`).
+  - Render stop markers with live ETA badges and subtle animated markers for `"Estimated Waves"`.
+  - Include a top/bottom commuter card for the **"What time is your class/shift?"** Reverse-Departure Calculator.
+  - Keep OSM tile providers configurable, honor provider usage policies, and do not bulk-download public tiles.
+
+---
+
+## Coding & Verification Standards
+- Always handle timezones explicitly in `Asia/Manila` (`UTC+8`).
+- Write unit tests for the Reverse-Departure Calculator, Cut-Trip Comparator, and Peak/Off-Peak polling scheduler using mocked segment durations (normal flow, Palestina bottleneck, and API timeout fallback).
+- Keep frontend assets lightweight and zero-bloat so pages load fast on mobile data along the highway.

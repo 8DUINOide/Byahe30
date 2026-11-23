@@ -1,0 +1,136 @@
+{
+  "schema_version": 1,
+  "corridor": {
+    "id": "baao-naga",
+    "name": "Baao – Pili – Naga – ADNU",
+    "region": "Camarines Sur, Bicol Region, Philippines",
+    "is_active": true,
+    "timezone": "Asia/Manila",
+    "distance_km": 30.7,
+    "data_quality": "planning_estimates",
+    "source_note": "Coordinates use public place or barangay locations as approximate map anchors, not verified boarding points. Segment distances and durations are illustrative baselines. Replace with surveyed stop points and routing-provider geometry before operational use.",
+    "coordinate_references": [
+      {"stop_id": "anayan_junction", "source": "GeoNames populated place", "url": "https://www.geonames.org/1730832/anayan.html"},
+      {"stop_id": "palestina", "source": "PhilAtlas barangay profile", "url": "https://www.philatlas.com/luzon/r05/camarines-sur/pili/palestina.html"},
+      {"stop_id": "del_rosario", "source": "PhilAtlas barangay profile", "url": "https://www.philatlas.com/luzon/r05/camarines-sur/naga/del-rosario.html"},
+      {"stop_id": "concepcion_pequena_grande", "source": "PhilAtlas Concepcion Grande profile", "url": "https://www.philatlas.com/luzon/r05/camarines-sur/naga/concepcion-grande.html"},
+      {"stop_id": "adnu_main", "source": "Ateneo de Naga campus address; coordinate is approximate", "url": "https://www.adnu.edu.ph/visit/"}
+    ]
+  },
+  "routes": [
+    {
+      "route_id": "baao-naga-direct",
+      "route_short_name": "Baao–Naga",
+      "route_long_name": "Baao Centro to Ateneo de Naga University",
+      "mode": "MIXED",
+      "stop_ids": [
+        "baao_centro",
+        "anayan_junction",
+        "pili_centro",
+        "palestina",
+        "del_rosario",
+        "concepcion_pequena_grande",
+        "naga_terminal",
+        "adnu_main"
+      ]
+    }
+  ],
+  "stops": [
+    {
+      "stop_id": "baao_centro",
+      "stop_name": "Baao Centro / Crossing",
+      "sequence_order": 1,
+      "lat": 13.4533,
+      "lng": 123.3653,
+      "is_transfer_hub": false,
+      "role": "origin",
+      "location_precision": "approximate_town_center"
+    },
+    {
+      "stop_id": "anayan_junction",
+      "stop_name": "Anayan / Bula Junction",
+      "sequence_order": 2,
+      "lat": 13.5247,
+      "lng": 123.2941,
+      "is_transfer_hub": false,
+      "role": "checkpoint",
+      "location_precision": "approximate_populated_place"
+    },
+    {
+      "stop_id": "pili_centro",
+      "stop_name": "Pili Centro / Capitol area",
+      "sequence_order": 3,
+      "lat": 13.5543,
+      "lng": 123.2747,
+      "is_transfer_hub": true,
+      "role": "transfer_hub",
+      "location_precision": "approximate_town_center"
+    },
+    {
+      "stop_id": "palestina",
+      "stop_name": "Palestina, Pili",
+      "sequence_order": 4,
+      "lat": 13.6114,
+      "lng": 123.2494,
+      "is_transfer_hub": false,
+      "role": "checkpoint",
+      "location_precision": "approximate_barangay_center"
+    },
+    {
+      "stop_id": "del_rosario",
+      "stop_name": "Del Rosario (Naga boundary area)",
+      "sequence_order": 5,
+      "lat": 13.6174,
+      "lng": 123.2372,
+      "is_transfer_hub": false,
+      "role": "checkpoint",
+      "location_precision": "approximate_barangay_center"
+    },
+    {
+      "stop_id": "concepcion_pequena_grande",
+      "stop_name": "Concepcion Pequeña / Grande area",
+      "sequence_order": 6,
+      "lat": 13.6200,
+      "lng": 123.2207,
+      "is_transfer_hub": false,
+      "role": "checkpoint",
+      "location_precision": "approximate_barangay_center"
+    },
+    {
+      "stop_id": "naga_terminal",
+      "stop_name": "Naga Central / Eastbound Terminal",
+      "sequence_order": 7,
+      "lat": 13.6244,
+      "lng": 123.1864,
+      "is_transfer_hub": true,
+      "role": "transfer_hub",
+      "location_precision": "approximate_city_center"
+    },
+    {
+      "stop_id": "adnu_main",
+      "stop_name": "Ateneo de Naga University (Bagumbayan)",
+      "sequence_order": 8,
+      "lat": 13.63078,
+      "lng": 123.18432,
+      "is_transfer_hub": false,
+      "role": "destination",
+      "location_precision": "approximate_campus_location",
+      "last_mile_buffer_sec": 480
+    }
+  ],
+  "segments": [
+    {"segment_id": "baao_centro_anayan_junction", "from_stop_id": "baao_centro", "to_stop_id": "anayan_junction", "distance_km": 10.1, "baseline_duration_sec": 720, "congestion_ratio": 1.0},
+    {"segment_id": "anayan_junction_pili_centro", "from_stop_id": "anayan_junction", "to_stop_id": "pili_centro", "distance_km": 4.2, "baseline_duration_sec": 480, "congestion_ratio": 1.0},
+    {"segment_id": "pili_centro_palestina", "from_stop_id": "pili_centro", "to_stop_id": "palestina", "distance_km": 7.2, "baseline_duration_sec": 600, "congestion_ratio": 1.0},
+    {"segment_id": "palestina_del_rosario", "from_stop_id": "palestina", "to_stop_id": "del_rosario", "distance_km": 1.8, "baseline_duration_sec": 300, "congestion_ratio": 1.0},
+    {"segment_id": "del_rosario_concepcion_pequena_grande", "from_stop_id": "del_rosario", "to_stop_id": "concepcion_pequena_grande", "distance_km": 2.2, "baseline_duration_sec": 420, "congestion_ratio": 1.0},
+    {"segment_id": "concepcion_pequena_grande_naga_terminal", "from_stop_id": "concepcion_pequena_grande", "to_stop_id": "naga_terminal", "distance_km": 4.1, "baseline_duration_sec": 540, "congestion_ratio": 1.0},
+    {"segment_id": "naga_terminal_adnu_main", "from_stop_id": "naga_terminal", "to_stop_id": "adnu_main", "distance_km": 1.1, "baseline_duration_sec": 360, "congestion_ratio": 1.0}
+  ],
+  "headway_schedules": [
+    {"schedule_id": "baao-naga-van-weekday", "vehicle_type": "van", "start_time": "05:30", "end_time": "21:30", "headway_minutes": 10, "day_type": "weekday"},
+    {"schedule_id": "baao-naga-jeepney-weekday", "vehicle_type": "jeepney", "start_time": "05:30", "end_time": "21:30", "headway_minutes": 15, "day_type": "weekday"},
+    {"schedule_id": "baao-naga-bus-weekday", "vehicle_type": "bus", "start_time": "05:30", "end_time": "21:30", "headway_minutes": 30, "day_type": "weekday"},
+    {"schedule_id": "baao-naga-any-weekend", "vehicle_type": "any", "start_time": "05:30", "end_time": "21:30", "headway_minutes": 15, "day_type": "weekend"}
+  ]
+}

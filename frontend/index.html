@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#102d2b">
+    <meta name="description" content="Traffic and departure planning for the Baao–Pili–Naga corridor.">
+    <title>Byahe30 — Your corridor, in context</title>
+    <link rel="stylesheet" href="/styles.css">
+    <script defer src="/config.js"></script>
+    <script defer src="/app.js"></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Byahe30 home">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span>BYAHE<span class="brand-number">30</span></span>
+      </a>
+      <div class="topbar-meta"><span class="live-dot"></span><span id="data-mode">Checking corridor</span><span class="meta-divider">/</span><span>CamSur, Philippines</span></div>
+      <a class="about-link" href="#how-it-works">How it works <span aria-hidden="true">↗</span></a>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow"><span>01</span> CORRIDOR INTELLIGENCE</p>
+          <h1>A clearer way<br>to <em>get there.</em></h1>
+          <p class="hero-description">Plan around the Baao–Pili–Naga commute with traffic estimates, scheduled service, and a little more time on your side.</p>
+          <div class="hero-route"><span>BAAO CENTRO</span><span class="route-line"></span><span>NAGA · ADNU</span></div>
+        </div>
+        <div class="hero-note">
+          <span class="note-index">A BETTER GUESS, EVERY DAY</span>
+          <p>No vehicle trackers. No check-ins. Just road conditions, schedule patterns, and a transparent estimate of what your trip could look like.</p>
+        </div>
+      </section>
+
+      <section class="corridor-section" aria-labelledby="corridor-heading">
+        <div class="section-heading">
+          <div><p class="eyebrow"><span>02</span> THE ROAD AHEAD</p><h2 id="corridor-heading">Baao to Naga</h2></div>
+          <div class="condition-legend"><span><i class="legend-dot clear"></i>Clear</span><span><i class="legend-dot moderate"></i>Slow</span><span><i class="legend-dot severe"></i>Heavy</span></div>
+        </div>
+        <div class="dashboard-grid">
+          <div class="map-card">
+            <div class="map-toolbar"><div><span class="map-label">CORRIDOR VIEW</span><span id="map-caption">Drive-time ETA from origin · not vehicle locations</span></div><div class="map-toolbar-actions"><span id="updated-at" class="updated-at">Loading…</span><button id="map-maximize" class="map-maximize-button" type="button" aria-label="Maximize map" aria-pressed="false" title="Maximize map"><svg class="maximize-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3m13-5h3a2 2 0 0 1 2 2v3M3 16v3a2 2 0 0 0 2 2h3m13-5v3a2 2 0 0 1-2 2h-3"/></svg><svg class="restore-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3v5a2 2 0 0 1-2 2H1m15-7v5a2 2 0 0 0 2 2h5M8 21v-5a2 2 0 0 0-2-2H1m15 7v-5a2 2 0 0 1 2-2h5"/></svg></button></div></div>
+            <div id="map-container" class="map-container">
+              <svg id="schematic" class="schematic" viewBox="0 0 900 390" role="img" aria-label="Schematic view of the Baao to Naga corridor"></svg>
+              <div id="osm-map" class="osm-map" aria-label="OpenStreetMap view of the Baao to Naga corridor"></div>
+            </div>
+            <div class="map-footnote"><span>↗</span> Lines connect corridor checkpoints and are approximate. They do not show a turn-by-turn road path.</div>
+          </div>
+          <aside class="corridor-summary">
+            <div class="summary-top"><span class="summary-kicker">CORRIDOR STATUS</span><span id="status-pill" class="status-pill"><i></i>Loading</span></div>
+            <div class="summary-metric"><span id="travel-time">—</span><span>estimated drive time</span></div>
+            <div class="summary-baseline"><span class="baseline-track"><i id="delay-track"></i></span><span id="delay-copy">against baseline</span></div>
+            <div class="summary-divider"></div>
+            <div class="summary-row"><span>Distance</span><strong id="distance-value">—</strong></div>
+            <div class="summary-row"><span>Checkpoints</span><strong id="checkpoint-value">—</strong></div>
+            <div class="summary-row"><span>Estimated waves</span><strong id="wave-count">—</strong></div>
+            <div id="bottleneck-list" class="bottleneck-list"></div>
+            <div class="summary-divider"></div>
+            <div class="live-arrivals">
+              <div class="summary-row live-count-row"><span>Live phone reports</span><strong id="live-vehicle-count">0</strong></div>
+              <label for="live-stop-select">Next bus at<select id="live-stop-select" aria-label="Select a stop for live bus arrivals"></select></label>
+              <div id="live-vehicle-list" class="live-vehicle-list" aria-live="polite"><p>No buses are sharing location right now. Estimated waves remain available above.</p></div>
+            </div>
+            <details class="driver-panel">
+              <summary>Driver: share this trip</summary>
+              <p>Use the phone already in the vehicle. Keep this page in the foreground and allow location access. Reports expire after 90 seconds; ending the trip removes the active location.</p>
+              <form id="driver-form">
+                <label>Operator access code<input id="driver-access-code" type="password" autocomplete="current-password" required></label>
+                <div class="driver-form-row">
+                  <label>Vehicle<select id="driver-vehicle-type"><option value="van">Van / UV</option><option value="jeepney">Jeepney</option><option value="bus">Bus</option></select></label>
+                  <label>Direction<select id="driver-direction"><option value="forward">Toward destination</option><option value="reverse">Toward origin</option></select></label>
+                </div>
+                <button id="driver-start" class="plan-button" type="submit"><span>Start location sharing</span><span aria-hidden="true">â†—</span></button>
+                <button id="driver-stop" class="driver-stop-button" type="button" disabled>End trip</button>
+                <p id="driver-status" class="driver-status" aria-live="polite">Ask the operator for an access code; location sharing must be enabled on the server.</p>
+              </form>
+            </details>
+            <p class="summary-source" id="summary-source">Waiting for corridor data.</p>
+          </aside>
+        </div>
+      </section>
+
+      <section class="planner-section" aria-labelledby="planner-heading">
+        <div class="planner-intro"><p class="eyebrow"><span>03</span> PLAN YOUR ARRIVAL</p><h2 id="planner-heading">When do you<br><em>need to be there?</em></h2><p>We’ll work backwards from your arrival time and include a typical service wait.</p></div>
+        <div class="planner-card">
+          <form id="planner-form">
+            <div class="form-row two-col">
+              <label>Starting from<select id="origin-stop" name="origin_stop_id" required></select></label>
+              <label>Going to<select id="destination-stop" name="destination_stop_id" required></select></label>
+            </div>
+            <div class="form-row two-col">
+              <label>Arrive by <span class="label-hint">Philippine time</span><input id="arrival-time" name="target_arrival_time" type="datetime-local" required></label>
+              <label>Preferred ride<select id="vehicle-type" name="vehicle_preference"><option value="any">Any available</option><option value="van">Van / UV</option><option value="jeepney">Jeepney</option><option value="bus">Bus</option></select></label>
+            </div>
+            <button class="plan-button" type="submit"><span>Find my leave time</span><span aria-hidden="true">↗</span></button>
+          </form>
+          <div id="plan-result" class="plan-result" aria-live="polite"></div>
+          <p class="planner-disclaimer">This is a planning estimate based on checkpoint traffic and scheduled headways. Add a personal buffer for queues, walking, and day-to-day variation.</p>
+        </div>
+      </section>
+
+      <section id="how-it-works" class="how-section">
+        <div><p class="eyebrow"><span>04</span> HOW BYAHE30 WORKS</p><h2>Useful signals.<br><em>Honest estimates.</em></h2></div>
+        <div class="how-copy"><p>Scheduled waves estimate where a typical run might be from service frequency and road times. A live phone report appears only when a participating driver shares location; it expires when updates stop.</p><p>During overnight hours, the app uses historical or seeded baseline values and makes no live traffic requests. The current starter corridor uses approximate place coordinates and baseline times pending local validation. Bus arrival times from a live phone report are estimates, not guarantees.</p><div class="source-key"><span><i class="source-dot live"></i>Live routing / phone report</span><span><i class="source-dot baseline"></i>Historical baseline</span></div></div>
+      </section>
+    </main>
+    <footer><a class="brand" href="/" aria-label="Byahe30 home"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><span>BYAHE<span class="brand-number">30</span></span></a><span>Built for the road you take.</span><span>All times shown in PHT · UTC+8</span></footer>
+  </body>
+</html>
