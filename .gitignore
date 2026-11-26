@@ -3,3 +3,5 @@ data/telemetry/*.jsonl
 .env
 .env.*
 !.env.example
+
+.vercel
