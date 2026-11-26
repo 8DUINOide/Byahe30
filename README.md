@@ -1,6 +1,12 @@
-# Byahe30
-
-Byahe30 is a software-only commuter planning and in-transit guidance app for the Baao–Pili–Naga–ADNU corridor in Camarines Sur. It uses OpenStreetMap road context, scheduled service patterns, optional traffic and weather APIs, and browser-only commuter GPS. No vehicle hardware, passenger check-ins, or map tokens are required.
+<table>
+  <tr>
+    <td width="150"><img src="frontend/favicon.png" alt="Byahe30 favicon" width="128"></td>
+    <td>
+      <h1>Byahe30</h1>
+      <p>Software-only commuter planning and in-transit guidance for the Baao–Pili–Naga–ADNU corridor in Camarines Sur. Uses OpenStreetMap road context, scheduled service patterns, optional traffic and weather APIs, and browser-only commuter GPS. No vehicle hardware, passenger check-ins, or map tokens required.</p>
+    </td>
+  </tr>
+</table>
 
 ## Run locally
 
