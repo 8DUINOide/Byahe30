@@ -22,10 +22,10 @@ async function seedCorridor(seed) {
 
     for (const stop of seed.stops) {
       await client.query(`
-        insert into stops (stop_id, corridor_id, name, sequence_order, lat, lng, is_transfer_hub)
-        values ($1, $2, $3, $4, $5, $6, $7)
-        on conflict (stop_id) do update set name = excluded.name, sequence_order = excluded.sequence_order, lat = excluded.lat, lng = excluded.lng, is_transfer_hub = excluded.is_transfer_hub
-      `, [stop.stop_id, corridor.id, stop.stop_name, stop.sequence_order, stop.lat, stop.lng, stop.is_transfer_hub]);
+        insert into stops (stop_id, corridor_id, name, sequence_order, lat, lng, is_transfer_hub, direction, landmarks)
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+        on conflict (stop_id) do update set name = excluded.name, sequence_order = excluded.sequence_order, lat = excluded.lat, lng = excluded.lng, is_transfer_hub = excluded.is_transfer_hub, direction = excluded.direction, landmarks = excluded.landmarks
+      `, [stop.stop_id, corridor.id, stop.stop_name, stop.sequence_order, stop.lat, stop.lng, stop.is_transfer_hub, stop.direction, JSON.stringify(stop.landmarks || [])]);
     }
 
     for (const route of seed.routes) {

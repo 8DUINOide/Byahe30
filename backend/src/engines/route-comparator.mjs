@@ -6,6 +6,18 @@ function travelSeconds(segments, metrics) {
   return segments.reduce((sum, segment) => sum + getSegmentMetric(segment, metrics).live_duration_sec, 0);
 }
 
+function bottlenecks(segments, metrics) {
+  return segments.flatMap((segment) => {
+    const metric = getSegmentMetric(segment, metrics);
+    if (metric.congestion_ratio < 1.2) return [];
+    return [{
+      segment_id: segment.segment_id,
+      delay_sec: Math.max(0, metric.live_duration_sec - segment.baseline_duration_sec),
+      congestion_level: metric.congestion_ratio > 1.6 ? 'SEVERE' : 'MODERATE'
+    }];
+  });
+}
+
 export function compareRoutes({ seed, metrics = new Map(), originStopId, destinationStopId, at = new Date(), vehiclePreference = 'any' }) {
   const { stops, segments } = getPath(seed, originStopId, destinationStopId);
   const lastMileBufferSec = Number.isInteger(stops.at(-1).last_mile_buffer_sec) ? stops.at(-1).last_mile_buffer_sec : 0;
@@ -16,7 +28,7 @@ export function compareRoutes({ seed, metrics = new Map(), originStopId, destina
     const headway = resolveHeadway(seed, at, vehicleType);
     const travel = travelSeconds(segments, metrics);
     const wait = headway.headway_minutes * 30;
-    return { type: 'direct', vehicle_type: vehicleType, travel_time_sec: travel, wait_time_sec: wait, last_mile_buffer_sec: lastMileBufferSec, total_time_sec: travel + wait + lastMileBufferSec, source: headway.source };
+    return { type: 'direct', vehicle_type: vehicleType, travel_time_sec: travel, wait_time_sec: wait, last_mile_buffer_sec: lastMileBufferSec, total_time_sec: travel + wait + lastMileBufferSec, bottlenecks: bottlenecks(segments, metrics), source: headway.source };
   }).sort((a, b) => a.total_time_sec - b.total_time_sec)[0];
 
   const cutTrips = [];
@@ -41,6 +53,7 @@ export function compareRoutes({ seed, metrics = new Map(), originStopId, destina
           first_leg_time_sec: firstTime,
           second_leg_time_sec: secondTime,
           travel_time_sec: firstTime + secondTime,
+          bottlenecks: bottlenecks([...firstLeg, ...secondLeg], metrics),
           wait_time_sec: originWait + transferWait,
           last_mile_buffer_sec: lastMileBufferSec,
           total_time_sec: firstTime + secondTime + originWait + transferWait + lastMileBufferSec,

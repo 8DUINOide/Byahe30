@@ -36,7 +36,7 @@ export class PostgresTelemetryStore {
 
   async list() {
     const result = await this.pool.query(`
-      select segment_id, recorded_at, live_duration_sec, congestion_ratio, source
+      select segment_id, recorded_at, live_duration_sec, congestion_ratio, source, incidents, weather
       from telemetry_logs
       where recorded_at >= now() - interval '7 days'
       order by recorded_at desc
@@ -45,7 +45,9 @@ export class PostgresTelemetryStore {
       ...row,
       recorded_at: new Date(row.recorded_at).toISOString(),
       live_duration_sec: Number(row.live_duration_sec),
-      congestion_ratio: Number(row.congestion_ratio)
+      congestion_ratio: Number(row.congestion_ratio),
+      incidents: row.incidents || [],
+      weather: row.weather || null
     }));
   }
 
@@ -56,9 +58,9 @@ export class PostgresTelemetryStore {
       await client.query('begin');
       for (const record of records) {
         await client.query(`
-          insert into telemetry_logs (segment_id, recorded_at, live_duration_sec, congestion_ratio, source)
-          values ($1, $2, $3, $4, $5)
-        `, [record.segment_id, record.recorded_at, record.live_duration_sec, record.congestion_ratio, record.source]);
+          insert into telemetry_logs (segment_id, recorded_at, live_duration_sec, congestion_ratio, source, incidents, weather)
+          values ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)
+        `, [record.segment_id, record.recorded_at, record.live_duration_sec, record.congestion_ratio, record.source, JSON.stringify(record.incidents || []), JSON.stringify(record.weather || null)]);
       }
       await client.query('commit');
     } catch (error) {

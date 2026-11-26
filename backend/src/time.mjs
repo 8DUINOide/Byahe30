@@ -22,6 +22,12 @@ export function formatPht(value) {
   }).format(value);
 }
 
+export function formatPhtIso(value) {
+  const { year, month, day, hour, minute, second } = phtParts(value);
+  const milliseconds = String(value.getUTCMilliseconds()).padStart(3, '0');
+  return `${year}-${month}-${day}T${hour}:${minute}:${second}.${milliseconds}+08:00`;
+}
+
 export function parsePhtDateTime(input) {
   if (typeof input !== 'string') throw new TypeError('target_arrival_time must be a date-time string');
   const localPht = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(input);

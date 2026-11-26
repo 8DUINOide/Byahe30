@@ -16,6 +16,7 @@ test('reverse departure sums travel, half-headway wait, and ADNU last mile', () 
   assert.equal(result.breakdown.travel_time_sec, 3420);
   assert.equal(result.breakdown.headway_wait_sec, 300);
   assert.equal(result.breakdown.last_mile_buffer_sec, 480);
+  assert.equal(result.breakdown.terminal_wait_buffer_sec, 300);
   assert.equal(result.leave_home_by, '2026-11-23T22:20:00.000Z');
   assert.equal(result.leave_home_by_pht, 'Nov 24, 2026, 6:20 AM');
 });
@@ -50,9 +51,32 @@ test('direct and transfer options include transfer wait and return a recommendat
 test('virtual runs are labeled as estimates and interpolated on corridor checkpoints', () => {
   const result = generateEstimatedWaves({ seed, at: new Date('2026-11-24T00:30:00.000Z'), vehicleType: 'van' });
   assert.ok(result.waves.length > 0);
-  assert.equal(result.waves[0].label, 'Estimated Wave');
+  assert.equal(result.waves[0].label, 'Estimated Wave (±8 mins)');
   assert.equal(result.waves[0].position_precision, 'checkpoint_interpolation_estimate');
   assert.ok(result.waves.every((wave) => wave.confidence_window_minutes > 0));
+});
+
+test('all stops carry direction, landmark, and transfer metadata', () => {
+  assert.ok(seed.stops.every((stop) =>
+    ['northbound', 'southbound'].includes(stop.direction) &&
+    stop.served_directions.includes('northbound') &&
+    stop.served_directions.includes('southbound') &&
+    Array.isArray(stop.landmarks) && stop.landmarks.length > 0
+  ));
+  assert.equal(seed.stops.find((stop) => stop.stop_id === 'pili_centro').is_transfer_hub, true);
+  assert.equal(seed.stops.find((stop) => stop.stop_id === 'naga_terminal').is_transfer_hub, true);
+});
+
+test('estimated wave positions use OSM segment geometry when available', () => {
+  const segment = seed.segments[0];
+  const roadGeometries = new Map([[segment.segment_id, {
+    type: 'LineString',
+    coordinates: [[123.3653, 13.4533], [123.34, 13.49], [123.2941, 13.5247]]
+  }]]);
+  const result = generateEstimatedWaves({
+    seed, roadGeometries, at: new Date('2026-11-24T00:30:00.000Z'), vehicleType: 'van'
+  });
+  assert.ok(result.waves.some((wave) => wave.position_precision === 'osm_road_geometry_estimate'));
 });
 
 test('virtual waves expire at the historical drift cap', () => {

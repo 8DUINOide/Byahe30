@@ -1,124 +1,44 @@
-# AGENT.md — Byahe30 Engineering & Context Guide
+# Byahe30 Engineering Guide
 
-## 1. Project Overview
-**Byahe30** is a software-only commuter intelligence and transit corridor tracking platform designed for regional Philippine public transport corridors without hardware GPS trackers. 
+## Product and constraints
 
-Originally built for the **Baao-to-Naga / Ateneo de Naga University (ADNU)** corridor (~30–31 km along Maharlika Highway), Byahe30 models transit flow, live road congestion, headway schedules, and optimal departure windows purely through software APIs, GTFS schemas, and corridor math.
+Byahe30 is a software-only commuter intelligence app. It requires no vehicle trackers, OBD devices, passenger check-ins, or operator hardware. Its Baao–Pili–Naga–ADNU corridor is a planning model, not an operator-verified timetable. Do not describe estimated waves as live buses or GPS positions.
 
-### Core Architecture Philosophy
-* **Zero Dedicated Tracker Dependency:** No installed GPS units, vehicle OBD trackers, or mandatory passenger check-ins. A commuter riding a vehicle or its driver may optionally share phone location; core estimates must remain useful without reports.
-* **Corridor & Node Topology:** Treats routes as directed graph polylines with static highway nodes/waypoints.
-* **API Telemetry & Headway Logic:** Merges external traffic/routing telemetry with GTFS frequency rules to estimate travel times, corridor bottlenecks, and virtual vehicle progress.
-* **Scalable Standard:** Structured to expand effortlessly from Baao–Naga to other Bicol transit corridors (e.g., Iriga–Naga, Nabua–Naga, Legazpi–Naga) simply by declaring new node sets and GTFS feeds.
+The product has two independent modes:
 
----
+1. **Pre-Trip:** server-side traffic, incident, and weather telemetry plus GTFS-like headways power reverse departure planning, direct-versus-cut-trip comparison, and estimated waves.
+2. **In-Transit:** optional browser `navigator.geolocation.watchPosition()` supports nearest-checkpoint guidance, estimated remaining ETA, and a 500 m Para Alert. Keep this location in browser memory only; never send it to the API or persist it.
 
-## 2. Tech Stack & Architecture
+## Architecture
 
-```
-                       ┌──────────────────────────────┐
-                       │ External Routing & Traffic   │
-                       │  (Mapbox / Google / TomTom)  │
-                       └──────────────┬───────────────┘
-                                      │ (Cron Polling)
-                                      ▼
-┌─────────────────┐    ┌──────────────────────────────┐    ┌─────────────────────────┐
-│ Client Apps     │◄───┤ Backend & Telemetry Engine   │◄───┤ PostgreSQL + PostGIS    │
-│ (React/Native + │    │ (Node.js/TypeScript/FastAPI) │    │ (GTFS Feeds, Nodes,     │
-│ Leaflet + OSM)  │    │                              │    │ Segment History, Logs)  │
-└─────────────────┘    └──────────────────────────────┘    └─────────────────────────┘
-```
+- **Basemap and road geometry:** Leaflet with OpenStreetMap tiles and attribution. OSRM supplies cached road-following GeoJSON; stop coordinates are approximate planning anchors. Do not add Mapbox SDKs, tokens, endpoints, or assets.
+- **Traffic and incidents:** optional server-side TomTom Flow Segment Data and Incident Details APIs. Configure `BYAHE30_TOMTOM_API_KEY`; poll only on `backend/src/scheduler.mjs` time slots. Failures use same-hour telemetry history, then seeded duration.
+- **Weather:** Open-Meteo hourly precipitation (no key). Apply 1.15×–1.25× to live segment durations when the current local-hour rain alert is active. Weather data is cached and no traffic/weather requests run from 21:31–05:29 PHT.
+- **Backend:** Node.js ES modules, HTTP API, JSONL telemetry by default, optional PostgreSQL/PostGIS via `DATABASE_URL`.
+- **Frontend:** static mobile-first HTML/CSS/JavaScript. Browser GPS and notification behavior do not make location API requests.
+- **Time:** represent instants as ISO timestamps and format/interpret user-facing schedules in `Asia/Manila` (UTC+8).
 
-* **Frontend:** Lightweight browser dashboard using Leaflet and OpenStreetMap tiles; keep the map provider configurable.
-* **Backend:** Node.js (TypeScript) or Python (FastAPI), Serverless Workers / Cron triggers.
-* **Database:** PostgreSQL + PostGIS (or Supabase) using GTFS-compliant relational schemas.
-* **APIs & Services:** OpenStreetMap tiles and mapped data for static map context; Mapbox Matrix or another traffic provider for road conditions. OSM does not provide live bus positions or traffic telemetry.
+## Corridor and stop data
 
----
+Corridors are dynamically loaded from `data/gtfs/{corridor_id}/seed.json`. The top-level `corridor_id` and `corridor.id` match the directory/API key. Each seed defines its routes, ordered stops, segment baselines, transfer hubs, and headway schedules; adding a corridor should not require hard-coded route IDs in engines or UI.
 
-## 3. Data Models & Schemas
+Stops include `direction` (the canonical northbound sequence), `landmarks` (an array for local context), and `is_transfer_hub`. Southbound browser tracking traverses the same physical stop sequence in reverse. Pili Centro and Naga Central Terminal are transfer hubs in the starter seed. Update the JSON seed, PostgreSQL migration/importer, and relevant tests together when changing stop data.
 
-### 3.1 GTFS Base Entities (`routes.txt`, `stops.txt`, `frequencies.txt`, `shapes.txt`)
-* **`Corridor` / `Route`**: `route_id`, `route_short_name` ("Byahe30 Baao-Naga"), `origin_stop_id`, `destination_stop_id`, `mode` (`JEEPNEY`, `VAN_UV`, `BUS`).
-* **`StopNode`**: `stop_id`, `stop_name` ("Pili Centro"), `location` (`GEOMETRY(Point, 4326)`), `sequence_order`.
-* **`RouteShape`**: `shape_id`, `polyline_geom` (`GEOMETRY(LineString, 4326)`), `distance_km`.
-* **`HeadwaySchedule`**: `route_id`, `time_window` ("05:30-08:30"), `frequency_minutes` (e.g., 10 mins), `avg_dwell_time_sec`.
+## Planning and estimated waves
 
-### 3.2 Dynamic Telemetry & State
-* **`SegmentTelemetry`**:
-  * `segment_id` (e.g., `BAAO_ANAYAN`, `PILI_PALESTINA`, `PALESTINA_DELROSARIO`)
-  * `current_travel_time_sec`
-  * `free_flow_travel_time_sec`
-  * `delay_sec`
-  * `congestion_level` (`CLEAR`, `MODERATE`, `HEAVY`, `SEVERE`)
-  * `last_updated_at`
-* **`VirtualVehicleState`**:
-  * `trip_id`
-  * `route_id`
-  * `progress_ratio` ($0.0 \rightarrow 1.0$ along shape polyline)
-  * `current_segment_id`
-  * `estimated_arrival_destination`
+- Reverse departure subtracts live-or-baseline segment duration, a half-headway terminal wait, and any destination last-mile buffer from the requested PHT arrival.
+- Direct-versus-cut-trip comparison considers configured transfer hubs and includes segment bottlenecks in each alternative.
+- Estimated waves use headway schedules and traffic-adjusted segment durations. When OSRM geometry is available, place markers along that road polyline; otherwise fall back to checkpoint interpolation. Clearly label every marker `Estimated Wave (±X mins)`.
+- Late-night planning must continue to work from historical or seeded baselines without external calls.
 
----
+## Development
 
-## 4. Key Logic & Algorithms
+- Start locally with `cd backend; node src/server.mjs`.
+- Run tests with `cd backend; npm test`.
+- Keep API keys server-side; never include them in frontend configuration.
+- Preserve OSM attribution and follow public OSM tile, OSRM, and geocoding-service usage policies.
+- Keep changes surgical, add focused tests for new behavior, and document provider limits and estimate accuracy.
 
-### 4.1 Traffic Polling Engine (Smart Cache & API Saver)
-* Poll segment matrix travel times between key highway nodes (e.g., Baao → Anayan → Pili → Palestina → Del Rosario → Naga CBD → ADNU).
-* Dynamic Polling Frequency:
-  * **Rush Hour (05:30–08:30 & 16:30–19:30):** Every 5 minutes.
-  * **Midday (09:00–16:00):** Every 15 minutes.
-  * **Off-Peak / Night:** Serving cached historical baselines; zero external API calls.
+## Current scope
 
-### 4.2 Virtual Vehicle Spawner & Interpolation
-1. **Spawn:** Trigger virtual vehicles at origin terminals based on GTFS `frequencies.txt` rules during operating hours.
-2. **Move:** Advance estimated vehicle position along the corridor shape proportional to the **live `SegmentTelemetry` speed** (not static speed).
-3. **Drift Protection:** Despawn or clamp virtual markers if total trip duration exceeds $1.8 \times$ maximum segment historical delay.
-4. **Visual Labeling:** Always render as an *Estimated Wave / Scheduled Run* (with a confidence radius) rather than claiming hardware GPS precision.
-
-### 4.3 Reverse-Departure Calculator (Target Class Arrival)
-Given a desired arrival timestamp at target node (e.g., ADNU at `07:30 AM`):
-$$\text{Departure Time} = \text{Target Time} - (\text{Live Highway Travel Time} + \text{Terminal Queue Buffer} + \text{Last-Mile Buffer} + \text{Weather Multiplier})$$
-
----
-
-## 5. Directory Structure Guidelines
-
-```
-byahe30/
-├── docs/
-│   └── corridors/               # Waypoint definitions for Baao-Naga, Iriga-Naga, etc.
-├── src/
-│   ├── backend/
-│   │   ├── cron/                # Scheduled API polling & GTFS headway workers
-│   │   ├── services/            # Traffic matrix, OSM map data, virtual spawner
-│   │   ├── db/                  # PostGIS schemas and migrations
-│   │   └── api/                 # REST & Realtime WebSocket endpoints
-│   ├── frontend/
-│   │   ├── components/          # Leaflet map, CorridorHealth, DeparturePlanner
-│   │   ├── hooks/               # useCorridorTelemetry, useVirtualVehicles
-│   │   └── pages/               # Main commuter dashboard
-├── gtfs/                        # Static GTFS CSV feeds (routes, stops, shapes)
-└── AGENT.md
-```
-
----
-
-## 6. Coding Standards & Principles for AI Agents
-
-1. **Software-Only Constraint:** Never require dedicated hardware GPS or passenger check-ins. Optional location sharing from a commuter's or driver's existing phone is allowed; schedule and planning features must remain useful without it.
-2. **Deterministic Calculations:** Always compute segment ETAs using explicit node pairs. Never guess travel times without referencing stored segment metrics or API telemetry.
-3. **API Budget Awareness:** Ensure all routing API calls go through the caching layer (`SegmentTelemetry`). Never call external routing APIs directly from client components.
-4. **Resilient UX:** If external traffic APIs fail or rate-limit, fall back seamlessly to GTFS historical rush-hour profiles and flag the payload as `source: "historical_baseline"`.
-5. **Clear Corridor Naming:** Name nodes and segments using standardized slugs (`baao_centro`, `anayan_junction`, `pili_centro`, `palestina`, `del_rosario`, `naga_terminal`, `adnu_main`).
-
----
-
-## 7. Development Roadmap
-- [x] Phase 1: Corridor Topology & GTFS Schema Definition (Baao–Naga).
-- [x] Phase 2: Traffic Telemetry Cache Worker & Mapbox Matrix integration.
-- [x] Phase 3: Virtual Vehicle Spawner & Polyline Interpolation Engine.
-- [x] Phase 4: Reverse-Departure Calculator & Cut-Trip Comparator UI.
-- [ ] Phase 5: Multi-Corridor Expansion (Iriga–Naga & Nabua–Naga).
-
-The current code loads corridors from `data/gtfs/{corridor_id}/seed.json`; only Baao–Pili–Naga is seeded. Additional corridor data still needs validation and seeding before Phase 5 is complete.
+The active seed covers Baao–Pili–Naga–ADNU. Other towns such as Iriga and Nabua can be added as separate configured corridors after their stop locations, service patterns, and baselines are validated locally.

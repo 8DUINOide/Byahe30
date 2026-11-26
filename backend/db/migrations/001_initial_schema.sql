@@ -30,6 +30,8 @@ create table if not exists stops (
     location geography(point, 4326) generated always as
         (st_setsrid(st_makepoint(lng, lat), 4326)::geography) stored,
     is_transfer_hub boolean not null default false,
+    direction text not null default 'northbound' check (direction in ('northbound', 'southbound')),
+    landmarks jsonb not null default '[]'::jsonb,
     unique (corridor_id, sequence_order),
     unique (corridor_id, stop_id)
 );
@@ -78,6 +80,13 @@ create index if not exists telemetry_segment_recorded_idx
 
 create index if not exists telemetry_recorded_brin_idx
     on telemetry_logs using brin (recorded_at);
+
+alter table stops add column if not exists direction text not null default 'northbound';
+alter table stops add column if not exists landmarks jsonb not null default '[]'::jsonb;
+alter table stops drop constraint if exists stops_direction_check;
+alter table stops add constraint stops_direction_check check (direction in ('northbound', 'southbound'));
+alter table telemetry_logs add column if not exists incidents jsonb not null default '[]'::jsonb;
+alter table telemetry_logs add column if not exists weather jsonb;
 
 create table if not exists live_vehicle_trips (
     trip_id uuid primary key,

@@ -6,6 +6,7 @@
     <meta name="theme-color" content="#102d2b">
     <meta name="description" content="Traffic and departure planning for the Baao–Pili–Naga corridor.">
     <title>Byahe30 — Your corridor, in context</title>
+    <link rel="icon" type="image/png" sizes="256x256" href="/favicon.png">
     <link rel="stylesheet" href="/styles.css">
     <script defer src="/config.js"></script>
     <script defer src="/app.js"></script>
@@ -57,29 +58,20 @@
             <div class="summary-row"><span>Checkpoints</span><strong id="checkpoint-value">—</strong></div>
             <div class="summary-row"><span>Estimated waves</span><strong id="wave-count">—</strong></div>
             <div id="bottleneck-list" class="bottleneck-list"></div>
+            <div id="incident-list" class="incident-list" aria-live="polite"></div>
             <div class="summary-divider"></div>
-            <div class="live-arrivals">
-              <div class="summary-row live-count-row"><span>Live phone reports</span><strong id="live-vehicle-count">0</strong></div>
-              <label for="live-stop-select">Next bus at<select id="live-stop-select" aria-label="Select a stop for live bus arrivals"></select></label>
-              <div id="live-vehicle-list" class="live-vehicle-list" aria-live="polite"><p>No buses are sharing location right now. Estimated waves remain available above.</p></div>
-            </div>
-            <details class="driver-panel">
-              <summary>Commuter or driver: share a ride</summary>
-              <p>If you are riding or driving this vehicle, optionally share your phone location to help commuters ahead. Your live location is visible to Byahe30 users while sharing. Keep this page open; reports expire after 90 seconds, and ending the trip removes the active location.</p>
-              <form id="driver-form">
-                <label>I'm sharing as<select id="reporter-type"><option value="commuter">Commuter riding this vehicle</option><option value="driver">Driver / operator</option></select></label>
-                <div class="driver-form-row">
-                  <label>Vehicle<select id="driver-vehicle-type"><option value="van">Van / UV</option><option value="jeepney">Jeepney</option><option value="bus">Bus</option></select></label>
-                  <label>Direction<select id="driver-direction"><option value="forward">Toward destination</option><option value="reverse">Toward origin</option></select></label>
-                </div>
-                <label id="demo-speed-label" hidden>Local demo speed<select id="demo-speed"><option value="5">5×</option><option value="10" selected>10×</option><option value="20">20×</option></select></label>
-                <button id="driver-start" class="plan-button" type="submit"><span>Start location sharing</span><span aria-hidden="true">â†—</span></button>
-                <button id="demo-start" class="driver-demo-button" type="button" disabled hidden>Simulate a moving bus</button>
-                <p id="demo-note" class="driver-status" hidden>Local test only. Simulated positions and ETAs are labeled as a demo.</p>
-                <button id="driver-stop" class="driver-stop-button" type="button" disabled>End trip</button>
-                <p id="driver-status" class="driver-status" aria-live="polite">Sharing is optional. Your phone location is shared while this trip is active.</p>
-              </form>
-            </details>
+            <section class="in-transit-panel" aria-labelledby="tracker-heading">
+              <h3 id="tracker-heading">Track My Ride · Para Alert</h3>
+              <p>Your GPS stays in this browser. Byahe30 does not upload or store your location.</p>
+              <label for="track-direction">Direction<select id="track-direction">
+                <option value="northbound">Northbound · Baao → Naga / ADNU</option>
+                <option value="southbound">Southbound · Naga → Baao</option>
+              </select></label>
+              <label for="dropoff-stop">Para Alert · drop-off stop<select id="dropoff-stop"></select></label>
+              <p id="dropoff-landmarks" class="stop-landmarks"></p>
+              <button id="track-me" class="plan-button" type="button"><span>Just Track Me</span><span aria-hidden="true">↗</span></button>
+              <p id="track-status" class="tracker-status" aria-live="polite">Location access is optional. Turn on tracking while riding.</p>
+            </section>
             <p class="summary-source" id="summary-source">Waiting for corridor data.</p>
           </aside>
         </div>
@@ -106,7 +98,7 @@
 
       <section id="how-it-works" class="how-section">
         <div><p class="eyebrow"><span>04</span> HOW BYAHE30 WORKS</p><h2>Useful signals.<br><em>Honest estimates.</em></h2></div>
-        <div class="how-copy"><p>Scheduled waves estimate where a typical run might be from service frequency and road times. A community phone report can add an observed vehicle location; it expires when updates stop.</p><p>During overnight hours, the app uses historical or seeded baseline values and makes no live traffic requests. The current starter corridor uses approximate place coordinates and baseline times pending local validation. Bus arrival times from a live phone report are estimates, not guarantees.</p><div class="source-key"><span><i class="source-dot live"></i>Live routing / phone report</span><span><i class="source-dot baseline"></i>Historical baseline</span></div></div>
+        <div class="how-copy"><p>Scheduled waves estimate where a typical run might be from service frequency, road-following OpenStreetMap geometry, and traffic-adjusted segment times. In-transit GPS and Para Alert run only in the commuter’s browser and are never sent to the server.</p><p>During overnight hours, the app uses historical or seeded baseline values and makes no live traffic or weather requests. Optional TomTom traffic and incident data is polled server-side on quota-aware Manila-time intervals; Open-Meteo rain alerts adjust estimates. The corridor’s stop coordinates and baseline times remain planning estimates pending local validation.</p><div class="source-key"><span><i class="source-dot live"></i>Live traffic / weather</span><span><i class="source-dot baseline"></i>Historical baseline</span></div></div>
       </section>
     </main>
     <footer><a class="brand" href="/" aria-label="Byahe30 home"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><span>BYAHE<span class="brand-number">30</span></span></a><span>Built for the road you take.</span><span>All times shown in PHT · UTC+8</span></footer>

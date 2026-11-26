@@ -8,7 +8,7 @@ import { generateEstimatedWaves } from './engines/virtual-wave.mjs';
 import { getPrimaryRoute, getSegmentMetric } from './engines/path.mjs';
 import { resolveSegmentTelemetry, TelemetryStore } from './store/telemetry-store.mjs';
 import { getPollingPolicy } from './scheduler.mjs';
-import { formatPht } from './time.mjs';
+import { formatPht, formatPhtIso } from './time.mjs';
 import { projectOntoCorridor, getVehicleArrivals } from './engines/live-vehicles.mjs';
 import { LiveVehicleStore } from './store/live-vehicle-store.mjs';
 import { getRoadRouteGeometries } from './road-routing.mjs';
@@ -16,7 +16,7 @@ import { getRoadRouteGeometries } from './road-routing.mjs';
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8',
-  '.svg': 'image/svg+xml', '.ico': 'image/x-icon'
+  '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.png': 'image/png'
 };
 
 function sendJson(res, statusCode, data) {
@@ -57,7 +57,9 @@ function latestMetricMap(seed, records, at = new Date()) {
         live_duration_sec: Number(latest.live_duration_sec),
         congestion_ratio: Number(latest.congestion_ratio),
         source: latest.source,
-        recorded_at: latest.recorded_at
+        recorded_at: latest.recorded_at,
+        incidents: latest.incidents || [],
+        weather: latest.weather || null
       });
     } else {
       metrics.set(segment.segment_id, resolveSegmentTelemetry(segment, records, at));
@@ -274,7 +276,8 @@ export function createApiServer({ seedLoader = loadSeedById, listSeedLoader = li
               congestion_ratio: metric.congestion_ratio,
               congestion_level: congestionLevel(metric.congestion_ratio),
               source: metric.source,
-              last_updated_at: metric.recorded_at
+              last_updated_at: metric.recorded_at,
+              last_updated_at_pht: metric.recorded_at ? formatPht(new Date(metric.recorded_at)) : null
             };
           });
           const sources = new Set(segments.map((item) => item.source));
@@ -292,8 +295,11 @@ export function createApiServer({ seedLoader = loadSeedById, listSeedLoader = li
             corridor: seed.corridor,
             route: getPrimaryRoute(seed),
             as_of: now.toISOString(),
+            as_of_pht: formatPhtIso(now),
             source: sources.size === 1 ? [...sources][0] : 'mixed',
             geometry_quality: features.length === segments.length ? 'osm_road_route' : 'unavailable',
+            incidents: [...new Map([...metrics.values()].flatMap((metric) => metric.incidents || []).map((incident) => [incident.id || JSON.stringify(incident), incident])).values()],
+            weather: [...metrics.values()].find((metric) => metric.weather)?.weather || null,
             stops: stopsWithEtas,
             segments,
             bottlenecks,
@@ -306,7 +312,8 @@ export function createApiServer({ seedLoader = loadSeedById, listSeedLoader = li
           sendJson(res, 400, { error: 'vehicle_type must be van, jeepney, bus, or any' });
           return;
         }
-        sendJson(res, 200, generateEstimatedWaves({ seed, metrics, at: now, vehicleType }));
+        const roadGeometries = await getRoadRouteGeometries(seed);
+        sendJson(res, 200, generateEstimatedWaves({ seed, metrics, at: now, vehicleType, roadGeometries }));
         return;
       }
       if (req.method === 'POST' && url.pathname === '/api/v1/plan/reverse-departure') {

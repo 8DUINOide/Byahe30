@@ -6,12 +6,38 @@ function interpolate(start, end, ratio) {
   return [start.lng + (end.lng - start.lng) * ratio, start.lat + (end.lat - start.lat) * ratio];
 }
 
+function roadPosition(coordinates, ratio, fallbackStart, fallbackEnd) {
+  if (!coordinates || coordinates.length < 2) return interpolate(fallbackStart, fallbackEnd, ratio);
+  const radians = (degrees) => degrees * Math.PI / 180;
+  const lengths = coordinates.slice(0, -1).map((point, index) => {
+    const next = coordinates[index + 1];
+    const lat1 = radians(point[1]), lat2 = radians(next[1]);
+    const dLat = lat2 - lat1, dLng = radians(next[0] - point[0]);
+    const value = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+    return 6371 * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(Math.max(0, 1 - value)));
+  });
+  const target = lengths.reduce((sum, length) => sum + length, 0) * ratio;
+  let distance = 0;
+  for (let index = 0; index < lengths.length; index += 1) {
+    const length = lengths[index];
+    if (target <= distance + length || index === lengths.length - 1) {
+      const fraction = length ? Math.max(0, Math.min(1, (target - distance) / length)) : 0;
+      return [
+        coordinates[index][0] + (coordinates[index + 1][0] - coordinates[index][0]) * fraction,
+        coordinates[index][1] + (coordinates[index + 1][1] - coordinates[index][1]) * fraction
+      ];
+    }
+    distance += length;
+  }
+  return coordinates.at(-1);
+}
+
 function serviceWindowStart(now) {
   const part = phtParts(now);
   return parsePhtDateTime(`${part.year}-${part.month}-${part.day}T05:30`);
 }
 
-export function generateEstimatedWaves({ seed, metrics = new Map(), at = new Date(), vehicleType = 'van' }) {
+export function generateEstimatedWaves({ seed, metrics = new Map(), at = new Date(), vehicleType = 'van', roadGeometries = null }) {
   const now = at instanceof Date ? at : parsePhtDateTime(at);
   const schedules = getApplicableSchedules(seed, now);
   const schedule = schedules.find((item) => item.vehicle_type === vehicleType) ?? schedules.find((item) => item.vehicle_type === 'any');
@@ -46,18 +72,19 @@ export function generateEstimatedWaves({ seed, metrics = new Map(), at = new Dat
     const to = stops.find((stop) => stop.stop_id === segment.to_stop_id);
     const ratio = Math.max(0, Math.min(1, remaining / durations[segmentIndex]));
     const departAt = new Date(departure);
+    const coordinates = roadGeometries?.get(segment.segment_id)?.coordinates;
     waves.push({
       trip_id: `estimated-${seed.corridor.id}-${departAt.toISOString()}`,
       route_id: getPrimaryRoute(seed).route_id,
       vehicle_type: scheduledVehicleType,
-      label: 'Estimated Wave',
+      label: `Estimated Wave (±8 mins)`,
       confidence_window_minutes: 8,
       departure_time: departAt.toISOString(),
       departure_time_pht: formatPht(departAt),
       progress_ratio: Number((elapsed / measuredTripSec).toFixed(4)),
       current_segment_id: segment.segment_id,
-      position: interpolate(from, to, ratio),
-      position_precision: 'checkpoint_interpolation_estimate'
+      position: roadPosition(coordinates, ratio, from, to),
+      position_precision: coordinates?.length >= 2 ? 'osm_road_geometry_estimate' : 'checkpoint_interpolation_estimate'
     });
   }
   return {

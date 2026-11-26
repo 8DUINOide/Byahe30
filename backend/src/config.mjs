@@ -20,7 +20,9 @@ export async function loadSeedById(corridorId) {
   }
   const pathname = path.join(PROJECT_ROOT, 'data', 'gtfs', corridorId, 'seed.json');
   const seed = await loadSeed(pathname);
-  if (seed.corridor.id !== corridorId) throw Object.assign(new Error('Corridor id does not match its seed file'), { code: 'EINVAL' });
+  if (seed.corridor.id !== corridorId || seed.corridor_id && seed.corridor_id !== corridorId) {
+    throw Object.assign(new Error('Corridor id does not match its seed file'), { code: 'EINVAL' });
+  }
   return seed;
 }
 

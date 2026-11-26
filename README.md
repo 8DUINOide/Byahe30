@@ -1,46 +1,61 @@
 # Byahe30
 
-Byahe30 is a software-only commute planning starter for the Baao–Pili–Naga–ADNU corridor in Camarines Sur. It combines scheduled headways, checkpoint-to-checkpoint traffic estimates, and a reverse departure planner. It does not require dedicated vehicle GPS trackers or passenger check-ins. Participating operators can optionally share trip location from a phone already in the vehicle.
+Byahe30 is a software-only commuter planning and in-transit guidance app for the Baao–Pili–Naga–ADNU corridor in Camarines Sur. It uses OpenStreetMap road context, scheduled service patterns, optional traffic and weather APIs, and browser-only commuter GPS. No vehicle hardware, passenger check-ins, or map tokens are required.
 
 ## Run locally
 
-Requires Node.js 20 or later. No frontend build step or default package install is needed.
+Requires Node.js 20 or later. No frontend build or package install is needed to run the default server.
 
 ```powershell
 cd backend
 node src/server.mjs
 ```
 
-Open `http://localhost:3000`. The interactive map uses OpenStreetMap tiles and needs no map token; the built-in corridor schematic remains as a fallback. Routing data uses a separate server-side `MAPBOX_ACCESS_TOKEN` environment variable.
+Open `http://localhost:3000`. The browser tab uses the supplied Byahe30 favicon. Leaflet displays OpenStreetMap tiles with attribution and OSRM road-following geometry. The corridor schematic remains a fallback if the interactive map is unavailable.
+
+## Architecture
+
+### Pre-Trip commute intelligence
+
+- Calculates `leave_home_by` from the requested arrival time, checkpoint travel durations, a terminal wait buffer based on the configured headway, and destination last-mile buffer.
+- Compares a direct ride with cut-trips at configured transfer hubs, including bottlenecks in the alternatives.
+- Projects clearly labeled **Estimated Waves (±X mins)** along OSM road geometry using traffic-adjusted segment durations and headway schedules.
+- Polls optional TomTom Flow and Incident APIs on Manila-time quota-aware intervals: every 5 minutes at 05:30–08:30 and 16:30–19:30, every 15 minutes during the day, and no live traffic or weather calls from 21:31–05:29.
+- Fetches hourly Camarines Sur rain conditions from Open-Meteo (no API key) and applies a 1.15×–1.25× travel-time adjustment when rain is active. Failed providers fall back to same-hour history and then the seed baseline.
+
+Set a server-side TomTom key to enable live traffic and incidents:
+
+```powershell
+cd backend
+$env:BYAHE30_TOMTOM_API_KEY = "your-server-side-key"
+npm run poll
+```
+
+Run `npm run poll` from a cron service or task scheduler every minute; the worker makes provider calls only when a configured Manila-time polling slot is due. Without the key, weather polling and baseline telemetry still work. Do not expose the key in frontend files.
+
+TomTom is optional. Its [current pricing page](https://docs.tomtom.com/pricing) lists 20,000 free monthly requests for Traffic Flow API Segment Data and 2,500 for Traffic Incidents API Details. With the current schedule and seven segment-flow requests plus one incident request per poll, one continuously polled corridor can use approximately 23,700 flow requests and 3,400 incident requests per 30 days—above those free allowances. Check current terms and usage before enabling a key; paid usage may apply beyond the allowance.
+
+### In-Transit: Track My Ride / Para Alert
+
+The optional **Just Track Me** mode uses `navigator.geolocation.watchPosition()` in the commuter’s browser to identify the nearest checkpoint and estimate remaining time to the selected stop. Choose northbound (Baao → Naga / ADNU) or southbound (Naga → Baao), then choose a drop-off stop and view its local landmarks. A browser audio/vibration alert triggers within 500 m.
+
+The location is held only in the open browser tab and is not posted to Byahe30 or stored by the backend. Browser location generally requires HTTPS (localhost is allowed), permission, and a foreground page. Estimates are advisory; mobile browsers and GPS accuracy vary.
+
+## OpenStreetMap and accuracy
+
+The interactive map uses Leaflet and OpenStreetMap raster tiles; there are no Mapbox dependencies. OSRM requests road geometry for the ordered seed checkpoints and caches successful geometry for 24 hours, with a five-minute failure cache. Set `BYAHE30_OSRM_URL` to a managed or self-hosted OSRM endpoint for hosted use. Public OSRM and OSM tile services are best-effort, have usage policies, and do not provide live traffic or live bus positions. Keep visible OpenStreetMap attribution and review the [tile usage policy](https://operations.osmfoundation.org/policies/tiles/) before production use.
+
+The starter data is in `data/gtfs/baao-naga/seed.json`. Coordinates are approximate planning anchors; segment distances, travel baselines, landmarks, and headways need local validation. Every stop includes its canonical northbound direction, landmark notes, and transfer-hub flag. Southbound tracking reverses the configured stop order. Additional corridors such as Iriga or Nabua can be added as `data/gtfs/{corridor_id}/seed.json` without hard-coding town IDs into the engines.
 
 ## Online preview
 
-The repository includes a Render Blueprint and a GitHub Actions workflow. In Render, create a new Blueprint from this GitHub repository and deploy `render.yaml`. Then copy the service's Deploy Hook URL from its Settings page into the GitHub repository secret named `RENDER_DEPLOY_HOOK_URL` (**Settings → Secrets and variables → Actions**). GitHub Actions runs the backend tests on pushes to `main` and triggers a Render deploy after they pass. You can also run the workflow manually from the Actions tab. If the secret is not configured yet, the workflow reports that deployment was skipped.
+The repository includes a Fly.io app configuration and a GitHub Actions workflow. Create the Fly app once with `fly apps create byahe30-8duinoide` (if that name is unavailable, choose another and update `app` in `fly.toml`). In Fly.io, create an app-scoped deploy token. Add it to GitHub under **Settings → Secrets and variables → Actions** as `FLY_API_TOKEN`. GitHub Actions runs backend tests on pushes to `main` and deploys only after they pass; you can also run the workflow manually from the Actions tab. If the token is not configured yet, tests still run and deployment is skipped.
 
-The free preview is suitable for testing: it may sleep after inactivity, and its in-memory active vehicle reports are cleared when the service restarts. After deployment, open the Render `onrender.com` URL on a phone over HTTPS to test real location sharing. The moving-bus simulator remains local-only.
+The preview URL is `https://byahe30-8duinoide.fly.dev` unless you chose a different app name. The Fly machine stops when idle and starts on the next request. Fly's current Free plan includes $5 of monthly usage, then switches to pay-as-you-go and keeps the app running. Usage beyond that credit can be billed, so review Fly's current [pricing](https://fly.io/pricing/) before creating the app.
 
-## What is implemented
+## Data storage
 
-- Manila-time polling windows: every 5 minutes at peak, every 15 minutes off-peak, and no live routing calls from 21:31 through 05:29.
-- A Mapbox Matrix worker for adjacent checkpoint travel times. Provider errors fall back to same-hour telemetry history, then the seeded baseline.
-- Reverse departure planning with travel, half-headway wait, an ADNU last-mile buffer, and segment delay warnings.
-- Direct-versus-transfer comparisons at configured transfer hubs.
-- Scheduled virtual waves interpolated between corridor checkpoints. All markers are labeled as estimates with a confidence window.
-- Optional live phone reports from drivers or commuters riding a vehicle, with per-stop arrival estimates and automatic expiry when reports stop.
-- A responsive dashboard with corridor status and the departure planner.
-- PostgreSQL/PostGIS migration and seed importer for hosted use.
-
-## OpenStreetMap exploration
-
-The corridor map uses Leaflet with OpenStreetMap raster tiles. Its corridor line is requested from OSRM using the ordered corridor checkpoints, then drawn along mapped roads as separately colored segments. Stop coordinates remain approximate planning anchors; OSM tiles do not contain live bus positions, schedules, traffic speed, or passenger capacity.
-
-Other useful OSM-based services include [Overpass](https://wiki.openstreetmap.org/wiki/Overpass_API) for querying mapped objects such as bus stops and [bus-route relations](https://wiki.openstreetmap.org/wiki/Bus_routes), [Nominatim](https://nominatim.org/) for geocoding, and [OSRM](https://project-osrm.org/docs/v5.5.2/api/) for road-route geometry and baseline driving times. The backend caches road geometry in memory for 24 hours and retries failures after 5 minutes. For a hosted deployment, set `BYAHE30_OSRM_URL` to a managed or self-hosted OSRM endpoint; the default public demo is intended for reasonable non-commercial use, is best-effort, and provides no uptime guarantee. Routing times from OSRM are not live traffic estimates, and mapped bus relations do not imply live vehicle tracking. The public Nominatim service has a strict [usage policy](https://operations.osmfoundation.org/policies/nominatim/), including a one-request-per-second maximum and no client-side autocomplete. The [OSM tile policy](https://operations.osmfoundation.org/policies/tiles/) requires attribution, normal caching, and prohibits bulk tile downloads. Review each public service's policy before production use. Visible map attribution links to OpenStreetMap contributors.
-
-## Data and accuracy
-
-The starter seed is in `data/gtfs/baao-naga/seed.json`. Its nodes are approximate map anchors, and its distance and duration values are planning estimates. The road-following display geometry is generated from the ordered stops by OSRM; it is a mapped road route, not a verified bus operator route. Validate locations, headways, and baseline timings with local operators before using them for time-critical decisions.
-
-Without `DATABASE_URL`, the server stores telemetry in `data/telemetry/logs.jsonl`. Set `DATABASE_URL` to use PostgreSQL instead; then run the migration in `backend/db/migrations/001_initial_schema.sql` and seed the corridor:
+Without `DATABASE_URL`, telemetry is stored in `data/telemetry/logs.jsonl`. Set `DATABASE_URL` to use PostgreSQL/PostGIS, then apply `backend/db/migrations/001_initial_schema.sql` and seed:
 
 ```powershell
 cd backend
@@ -48,52 +63,26 @@ npm install
 npm run seed:db
 ```
 
-`npm install` supplies the optional PostgreSQL driver. For a Supabase project, run the migration in its SQL editor, then set `DATABASE_URL` to the database connection string.
-
-## Community phone reporting
-
-Drivers and commuters riding a vehicle can optionally share that phone's location. No access code or account is required. The reporter selects their role, vehicle type, and direction, then grants browser location permission. The page sends a location update about every 8 seconds while it remains open in the foreground. Use HTTPS in deployment; browser location works on localhost for development, while mobile browsers may pause location in the background.
-
-Active locations and the reporter role are visible to Byahe30 users. Share only while actually aboard or driving the selected vehicle. Reports disappear after 90 seconds without an update; ending a trip removes its active location. Stale sessions are cleaned up after 30 minutes. These are community phone reports, not agency-verified vehicle positions, and the scheduled estimates still work when nobody is sharing.
-
-On `localhost`, the sharing panel also offers **Simulate a moving bus** at 5×, 10×, or 20× speed. It sends clearly labeled demo positions through the same API, so you can watch the marker, route line, and per-stop ETAs update without GPS hardware or a moving phone. The highlighted road line begins at the shared position and follows the selected direction. Demo reports are accepted only on local development hosts. This changes the reported vehicle position and arrival estimates; external traffic estimates still update on the configured polling schedule.
-
-With `DATABASE_URL`, active reports use the `live_vehicle_trips` table. Without a database, reports live in the Node process and are lost on restart. If you already created the table from an earlier version, rerun the updated `backend/db/migrations/001_initial_schema.sql` to add or update the reporter-role constraint.
-## Traffic polling
-
-The worker checks whether its current Manila minute is scheduled. Run it from a cron service or task scheduler every minute; it only requests live data at the configured 5- or 15-minute marks.
-
-```powershell
-cd backend
-$env:MAPBOX_ACCESS_TOKEN = "your-server-side-token"
-npm run poll
-```
-
-The `mapbox/driving-traffic` matrix endpoint permits up to 10 coordinates per request; this seed has eight. Keep the routing token on the server. If no token is set or a request fails, the worker records a fallback reading. Optionally set `BYAHE30_WEATHER_MULTIPLIER` to a value from `1` through `2` when a trusted weather integration reports conditions that warrant a delay adjustment. The project does not fetch weather data on its own.
+`npm install` supplies the optional PostgreSQL driver. For a Supabase project, run the migration in its SQL editor, then set `DATABASE_URL` to the database connection string. Rerun the migration when upgrading an existing schema so stop direction/landmarks and telemetry weather/incident fields are added.
 
 ## API
 
-- `GET /api/v1/corridors` — active corridor seed.
-- `GET /api/v1/corridors/baao-naga/status` — stop, segment, congestion, and bottleneck data.
-- `GET /api/v1/corridors/baao-naga/waves?vehicle_type=van` — current estimated waves.
-- `GET /api/v1/corridors/{corridor_id}/vehicles` — fresh phone location reports and per-stop arrival estimates.
-- `POST /api/v1/corridors/{corridor_id}/vehicle-trips` — start an optional commuter or driver phone-reporting session.
-- `POST /api/v1/corridors/{corridor_id}/vehicle-trips/{trip_id}/position` — update the current phone location.
-- `POST /api/v1/corridors/{corridor_id}/vehicle-trips/{trip_id}/end` — stop reporting and remove the active location.
-- `POST /api/v1/plan/reverse-departure` — reverse departure and route comparison.
+- `GET /api/v1/corridors` — configured active corridors.
+- `GET /api/v1/corridors/{corridor_id}/status` — stop, segment, bottleneck, incident, weather, and OSM geometry data.
+- `GET /api/v1/corridors/{corridor_id}/waves?vehicle_type=van` — headway-based estimated waves.
+- `POST /api/v1/plan/reverse-departure` — reverse departure and direct-versus-transfer comparison.
 
-Example request body:
+Example request (an offset-free date-time is interpreted as Philippine local time):
 
 ```json
 {
+  "corridor_id": "baao-naga",
   "origin_stop_id": "baao_centro",
   "destination_stop_id": "adnu_main",
   "target_arrival_time": "2026-11-24T07:30",
   "vehicle_preference": "van"
 }
 ```
-
-An offset-free date-time is interpreted as Philippine local time. ISO date-times with an explicit timezone are also accepted.
 
 ## Verify
 
@@ -102,4 +91,4 @@ cd backend
 npm test
 ```
 
-The tests cover Manila-time polling boundaries, normal departure calculations, a Palestina bottleneck, direct-versus-transfer comparison, estimated wave labeling, same-hour history fallback, API timeout fallback, and zero live calls late at night.
+Tests cover Manila-time polling boundaries, weather/traffic fallback, reverse departure, transfer comparison, estimated-wave labeling and geometry, and the zero-call late-night rule.

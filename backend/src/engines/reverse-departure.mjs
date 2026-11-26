@@ -49,6 +49,7 @@ export function calculateReverseDeparture({ seed, metrics = new Map(), originSto
     breakdown: {
       travel_time_sec: travelTimeSec,
       headway_wait_sec: waitBufferSec,
+      terminal_wait_buffer_sec: waitBufferSec,
       headway_minutes: targetSchedule.headway_minutes,
       last_mile_buffer_sec: lastMileBufferSec,
       total_planning_time_sec: travelTimeSec + waitBufferSec + lastMileBufferSec
